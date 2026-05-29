@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { getLeads, getApiUrl } from '@/lib/api'
+import { getLeads, getLeadStats, getApiUrl } from '@/lib/api'
 import { Search, Download, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 
 interface Lead {
@@ -46,18 +46,6 @@ interface LeadsResponse {
   pages: number
 }
 
-const PROVINCIAS = [
-  'Buenos Aires', 'CABA', 'Córdoba', 'Santa Fe', 'Mendoza', 'Tucumán',
-  'Entre Ríos', 'Salta', 'Chaco', 'Corrientes', 'Misiones', 'Santiago del Estero',
-  'San Juan', 'San Luis', 'Jujuy', 'Río Negro', 'Neuquén', 'Formosa',
-  'La Pampa', 'Chubut', 'Santa Cruz', 'La Rioja', 'Catamarca', 'Tierra del Fuego',
-]
-
-const RUBROS = [
-  'farmacia', 'herboristería', 'dietética', 'spa', 'centro holístico',
-  'cosmética', 'terapias alternativas', 'yoga', 'meditación', 'reiki',
-  'naturista', 'otro',
-]
 
 function ScoreBadge({ score }: { score?: number }) {
   if (score === undefined || score === null) return <span className="text-slate-400">—</span>
@@ -92,6 +80,7 @@ export default function LeadsPage() {
   const [pages, setPages] = useState(1)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [provincias, setProvincias] = useState<string[]>([])
 
   // Filters
   const [search, setSearch] = useState('')
@@ -129,6 +118,12 @@ export default function LeadsPage() {
   useEffect(() => {
     fetchLeads()
   }, [fetchLeads])
+
+  useEffect(() => {
+    getLeadStats().then((s) => {
+      setProvincias((s.por_provincia ?? []).map((p: { provincia: string }) => p.provincia))
+    }).catch(() => {})
+  }, [])
 
   // Reset page on filter change
   useEffect(() => {
@@ -180,7 +175,7 @@ export default function LeadsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas las provincias</SelectItem>
-                {PROVINCIAS.map((p) => (
+                {provincias.map((p) => (
                   <SelectItem key={p} value={p}>{p}</SelectItem>
                 ))}
               </SelectContent>
@@ -192,9 +187,7 @@ export default function LeadsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los rubros</SelectItem>
-                {RUBROS.map((r) => (
-                  <SelectItem key={r} value={r}>{r}</SelectItem>
-                ))}
+                <SelectItem value="Tienda Holística / Sahumerios">Tienda Holística / Sahumerios</SelectItem>
               </SelectContent>
             </Select>
 
