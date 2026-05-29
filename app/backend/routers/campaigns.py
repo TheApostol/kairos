@@ -1,4 +1,6 @@
 import json
+import re
+import urllib.parse
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -27,6 +29,13 @@ class GenerateTextRequest(BaseModel):
     tipo: str
     segmento_desc: str
     producto_destacado: Optional[str] = None
+
+
+class QuickSendRequest(BaseModel):
+    lead_ids: List[int]
+    tipo: str = "email"  # "email" | "whatsapp"
+    asunto: Optional[str] = None
+    cuerpo: str
 
 
 # ─────────────────────────────────────────────
@@ -140,9 +149,63 @@ def _execute_campaign(campaign_id: str):
     })
 
 
+def _run_quick_email(leads: list, asunto: str, cuerpo: str):
+    html_body = "<p>" + cuerpo.replace("\n", "<br>") + "</p>"
+    for lead in leads:
+        email = lead.get("email", "")
+        if not email:
+            continue
+        _send_email_brevo(
+            to_email=email,
+            to_name=lead.get("empresa", ""),
+            subject=asunto,
+            html_body=html_body,
+            text_body=cuerpo,
+        )
+
+
 # ─────────────────────────────────────────────
 # ROUTES
 # ─────────────────────────────────────────────
+
+@router.post("/quick-send")
+def quick_send_leads(body: QuickSendRequest, background_tasks: BackgroundTasks):
+    if not body.lead_ids:
+        raise HTTPException(status_code=400, detail="No lead_ids provided")
+
+    ids_str = ",".join(str(i) for i in body.lead_ids)
+    leads = db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(body.lead_ids)})
+
+    if body.tipo == "whatsapp":
+        links = []
+        for lead in leads:
+            phone = lead.get("whatsapp") or lead.get("telefono", "") or ""
+            phone_clean = re.sub(r"[^0-9]", "", phone)
+            if not phone_clean:
+                continue
+            if len(phone_clean) <= 10:
+                phone_clean = "549" + phone_clean.lstrip("0")
+            elif phone_clean.startswith("0"):
+                phone_clean = "549" + phone_clean[1:]
+            msg = urllib.parse.quote(body.cuerpo)
+            links.append({
+                "empresa": lead.get("empresa", ""),
+                "telefono": lead.get("telefono", ""),
+                "url": f"https://wa.me/{phone_clean}?text={msg}",
+            })
+        return {"tipo": "whatsapp", "links": links, "total": len(links)}
+
+    # Email
+    if not settings.BREVO_API_KEY:
+        raise HTTPException(status_code=400, detail="BREVO_API_KEY not configured")
+    email_leads = [l for l in leads if l.get("email")]
+    background_tasks.add_task(_run_quick_email, email_leads, body.asunto or "Mensaje de Kairos", body.cuerpo)
+    return {
+        "tipo": "email",
+        "queued": len(email_leads),
+        "sin_email": len(leads) - len(email_leads),
+    }
+
 
 @router.get("/stats")
 def get_campaigns_stats():

@@ -28,6 +28,16 @@ class EnrichRequest(BaseModel):
 # GOOGLE PLACES HELPERS (inline from scraper_holistica.py)
 # ─────────────────────────────────────────────
 
+IRRELEVANT_PLACE_TYPES = {
+    "gym", "fitness_center", "restaurant", "food", "bar", "cafe", "bakery",
+    "meal_takeaway", "meal_delivery", "supermarket", "grocery_or_supermarket",
+    "lodging", "hotel", "car_repair", "car_dealer", "car_wash", "gas_station",
+    "bank", "atm", "school", "university", "hospital", "doctor", "dentist",
+    "pharmacy", "veterinary_care", "hair_care", "beauty_salon", "spa",
+    "laundry", "accounting", "lawyer", "insurance_agency", "real_estate_agency",
+    "night_club", "movie_theater", "bowling_alley", "stadium",
+}
+
 DEFAULT_QUERIES = [
     "sahumerios Argentina",
     "tienda holistica Argentina",
@@ -239,6 +249,10 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                         if pid in seen_ids:
                             continue
                         seen_ids.add(pid)
+
+                        place_types = set(place.get("types", []))
+                        if place_types & IRRELEVANT_PLACE_TYPES:
+                            continue
 
                         time.sleep(0.1)
                         details = _place_details(api_key, pid)

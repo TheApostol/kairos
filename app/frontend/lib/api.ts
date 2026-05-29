@@ -85,6 +85,19 @@ export async function getCampaignStats() {
   return apiFetch('/campaigns/stats')
 }
 
+export async function quickSendLeads(data: {
+  lead_ids: number[]
+  tipo: 'email' | 'whatsapp'
+  asunto?: string
+  cuerpo: string
+}) {
+  return apiFetch('/campaigns/quick-send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
 // Orders
 export async function getOrders(params?: Record<string, string>) {
   const query = params ? '?' + new URLSearchParams(params).toString() : ''
