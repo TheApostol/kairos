@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getCampaigns, getCampaignStats } from '@/lib/api'
+import { getCampaigns, getCampaignStats, duplicateCampaign, getFollowupWhatsappLinks } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -14,7 +14,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Megaphone, Mail, TrendingUp, Users, Plus, Loader2 } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Megaphone, Mail, TrendingUp, Users, Plus, Loader2, Copy, MessageCircle, ExternalLink } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -70,11 +76,23 @@ function pct(value?: number, total?: number) {
   return `${((value / total) * 100).toFixed(1)}%`
 }
 
+interface WaLink {
+  empresa: string
+  telefono: string
+  url: string
+}
+
 export default function CampaignsPage() {
   const router = useRouter()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [stats, setStats] = useState<CampaignStats | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // Seguimiento WA
+  const [waDialogOpen, setWaDialogOpen] = useState(false)
+  const [waLinks, setWaLinks] = useState<WaLink[]>([])
+  const [waLoading, setWaLoading] = useState(false)
+  const [waLoaded, setWaLoaded] = useState(false)
 
   useEffect(() => {
     Promise.all([getCampaigns(), getCampaignStats()])
@@ -85,6 +103,33 @@ export default function CampaignsPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  const handleDuplicate = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await duplicateCampaign(id)
+      const updated = await getCampaigns()
+      setCampaigns(updated.items ?? updated ?? [])
+    } catch {
+      // silently ignore
+    }
+  }
+
+  const handleOpenWaFollowup = async () => {
+    setWaDialogOpen(true)
+    if (!waLoaded) {
+      setWaLoading(true)
+      try {
+        const res = await getFollowupWhatsappLinks(3)
+        setWaLinks(res?.links ?? [])
+        setWaLoaded(true)
+      } catch {
+        setWaLinks([])
+      } finally {
+        setWaLoading(false)
+      }
+    }
+  }
 
   const statCards = [
     {
@@ -126,10 +171,25 @@ export default function CampaignsPage() {
           <h1 className="text-2xl font-bold text-slate-900">Campañas</h1>
           <p className="text-slate-500 mt-1">Gestión de campañas de email y WhatsApp</p>
         </div>
-        <Button onClick={() => router.push('/campaigns/new')} className="gap-2">
-          <Plus className="w-4 h-4" />
-          Nueva Campaña
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={handleOpenWaFollowup}
+            className="gap-2 border-green-600 text-green-700 hover:bg-green-50"
+          >
+            <MessageCircle className="w-4 h-4" />
+            {waLoaded
+              ? `Seguimiento WA (${waLinks.length} pendientes)`
+              : waLoading
+                ? 'Seguimiento WA (cargando...)'
+                : 'Seguimiento WA'
+            }
+          </Button>
+          <Button onClick={() => router.push('/campaigns/new')} className="gap-2">
+            <Plus className="w-4 h-4" />
+            Nueva Campaña
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -177,7 +237,18 @@ export default function CampaignsPage() {
                     onClick={() => router.push(`/campaigns/${c.id}`)}
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm truncate text-slate-900">{c.nombre}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-sm truncate text-slate-900">{c.nombre}</p>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-1.5 text-xs text-slate-400 flex-shrink-0"
+                          onClick={(e) => handleDuplicate(c.id, e)}
+                        >
+                          <Copy className="w-3 h-3 mr-1" />
+                          Duplicar
+                        </Button>
+                      </div>
                       <p className="text-xs text-slate-500 mt-0.5">{formatDate(c.created_at)}</p>
                       <div className="flex items-center gap-2 mt-1.5">
                         <TipoBadge tipo={c.tipo} />
@@ -226,16 +297,26 @@ export default function CampaignsPage() {
                       <TableCell>{pct(c.clicks, c.enviados)}</TableCell>
                       <TableCell className="text-slate-500">{formatDate(c.created_at)}</TableCell>
                       <TableCell>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            router.push(`/campaigns/${c.id}`)
-                          }}
-                        >
-                          Ver
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              router.push(`/campaigns/${c.id}`)
+                            }}
+                          >
+                            Ver
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-slate-400 hover:text-slate-700"
+                            onClick={(e) => handleDuplicate(c.id, e)}
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -246,6 +327,52 @@ export default function CampaignsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Seguimiento WA Dialog */}
+      <Dialog open={waDialogOpen} onOpenChange={setWaDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-green-700">
+              <MessageCircle className="w-5 h-5" />
+              Seguimiento por WhatsApp
+            </DialogTitle>
+          </DialogHeader>
+          {waLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+            </div>
+          ) : waLinks.length === 0 ? (
+            <div className="text-center py-8 text-slate-500">
+              <MessageCircle className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">Sin leads pendientes de seguimiento</p>
+              <p className="text-sm text-slate-400 mt-1">No hay leads con más de 3 días sin respuesta</p>
+            </div>
+          ) : (
+            <div className="space-y-2 mt-2">
+              <p className="text-sm text-slate-500 mb-3">
+                {waLinks.length} leads con emails enviados hace más de 3 días sin respuesta
+              </p>
+              {waLinks.map((link, i) => (
+                <a
+                  key={i}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between p-3 rounded-lg bg-green-50 hover:bg-green-100 transition-colors border border-green-200 group"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-green-900">{link.empresa || 'Sin nombre'}</p>
+                    {link.telefono && (
+                      <p className="text-xs text-green-700 mt-0.5">{link.telefono}</p>
+                    )}
+                  </div>
+                  <ExternalLink className="w-4 h-4 text-green-600 opacity-60 group-hover:opacity-100" />
+                </a>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

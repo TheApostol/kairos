@@ -32,7 +32,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { getLeads, getLeadStats, getLeadRubros, getApiUrl, updateLead, quickSendLeads, generateCampaignText } from '@/lib/api'
-import { Search, Download, ChevronLeft, ChevronRight, Loader2, Mail, MessageSquare, FileDown, Sparkles } from 'lucide-react'
+import { Search, Download, ChevronLeft, ChevronRight, Loader2, Mail, MessageSquare, FileDown, Sparkles, Upload } from 'lucide-react'
 
 interface Lead {
   id: number
@@ -97,6 +97,12 @@ export default function LeadsPage() {
   const [generating, setGenerating] = useState(false)
   const [sendResult, setSendResult] = useState('')
   const [aiError, setAiError] = useState('')
+
+  // CSV Import
+  const [showImportDialog, setShowImportDialog] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<{ inserted: number; skipped: number } | null>(null)
 
   const fetchLeads = useCallback(async () => {
     setLoading(true)
@@ -232,6 +238,24 @@ export default function LeadsPage() {
     window.open(`${getApiUrl('/leads/export')}?${params.toString()}`, '_blank')
   }
 
+  const handleImport = async () => {
+    if (!importFile) return
+    setImporting(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', importFile)
+      const res = await fetch(`${getApiUrl('/leads/import')}`, { method: 'POST', body: formData })
+      if (!res.ok) throw new Error(await res.text())
+      const result = await res.json()
+      setImportResult(result)
+      fetchLeads()
+    } catch {
+      setImportResult({ inserted: 0, skipped: -1 })
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const allSelected = leads.length > 0 && selectedIds.size === leads.length
 
   return (
@@ -241,10 +265,16 @@ export default function LeadsPage() {
           <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Leads</h1>
           <p className="mt-1" style={{ color: '#6B4F3A' }}>{total.toLocaleString('es-AR')} leads en total</p>
         </div>
-        <Button onClick={handleExport} variant="outline" className="gap-2">
-          <Download className="w-4 h-4" />
-          Exportar CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setShowImportDialog(true)} variant="outline" className="gap-2">
+            <Upload className="w-4 h-4" />
+            Importar CSV
+          </Button>
+          <Button onClick={handleExport} variant="outline" className="gap-2">
+            <Download className="w-4 h-4" />
+            Exportar CSV
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -631,6 +661,46 @@ export default function LeadsPage() {
                   </Button>
                 )}
               </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import CSV dialog */}
+      <Dialog open={showImportDialog} onOpenChange={(o) => { setShowImportDialog(o); if (!o) { setImportFile(null); setImportResult(null) } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Importar Leads desde CSV</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {importResult ? (
+              <div className="text-center py-4">
+                <p className="text-lg font-bold text-green-700">✓ {importResult.inserted} leads importados</p>
+                <p className="text-sm text-slate-500">{importResult.skipped} omitidos (duplicados o sin nombre)</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Archivo CSV</Label>
+                  <Input type="file" accept=".csv" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
+                </div>
+                <div className="text-xs text-slate-500 space-y-1">
+                  <p className="font-medium">Columnas reconocidas:</p>
+                  <p>empresa / nombre, telefono, email, ciudad, provincia, rubro, website</p>
+                  <p>La primera fila debe ser el encabezado. Acepta CSV de Excel (UTF-8 o con BOM).</p>
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowImportDialog(false)}>
+              {importResult ? 'Cerrar' : 'Cancelar'}
+            </Button>
+            {!importResult && (
+              <Button onClick={handleImport} disabled={!importFile || importing}>
+                {importing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                Importar
+              </Button>
             )}
           </DialogFooter>
         </DialogContent>

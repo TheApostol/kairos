@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { getLeadStats, getOrderStats } from '@/lib/api'
+import { getLeadStats, getOrderStats, getTodayTasks } from '@/lib/api'
 import {
   BarChart,
   Bar,
@@ -18,7 +18,7 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Users, Mail, ShoppingBag, TrendingUp, Loader2 } from 'lucide-react'
+import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle } from 'lucide-react'
 
 interface LeadStats {
   total: number
@@ -57,6 +57,7 @@ function formatCurrency(n: number) {
 export default function DashboardPage() {
   const [leadStats, setLeadStats] = useState<LeadStats | null>(null)
   const [orderStats, setOrderStats] = useState<OrderStats | null>(null)
+  const [overdueTasksCount, setOverdueTasksCount] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -68,6 +69,11 @@ export default function DashboardPage() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
+
+    // Load overdue tasks count independently so it doesn't block main load
+    getTodayTasks()
+      .then((res) => setOverdueTasksCount(res?.total ?? 0))
+      .catch(() => setOverdueTasksCount(0))
   }, [])
 
   if (loading) {
@@ -126,6 +132,14 @@ export default function DashboardPage() {
       iconColor: '#22c55e',
       iconBg: '#f0fdf4',
     },
+    {
+      title: 'Tareas Vencidas',
+      value: overdueTasksCount !== null ? overdueTasksCount.toLocaleString('es-AR') : '—',
+      icon: AlertCircle,
+      iconColor: overdueTasksCount && overdueTasksCount > 0 ? '#dc2626' : '#22c55e',
+      iconBg: overdueTasksCount && overdueTasksCount > 0 ? '#fef2f2' : '#f0fdf4',
+      urgent: overdueTasksCount !== null && overdueTasksCount > 0,
+    },
   ]
 
   const provinciaData = (leadStats?.por_provincia ?? [])
@@ -156,22 +170,25 @@ export default function DashboardPage() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        {statCards.map(({ title, value, icon: Icon, iconColor, iconBg }) => (
-          <Card key={title}>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium" style={{ color: '#6B4F3A' }}>{title}</p>
-                  <p className="text-2xl font-bold mt-1" style={{ color: '#4A3728' }}>{value}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        {statCards.map(({ title, value, icon: Icon, iconColor, iconBg, ...rest }) => {
+          const urgent = (rest as { urgent?: boolean }).urgent
+          return (
+            <Card key={title} className={urgent ? 'ring-2 ring-red-300' : ''}>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium" style={{ color: '#6B4F3A' }}>{title}</p>
+                    <p className={`text-2xl font-bold mt-1 ${urgent ? 'text-red-600' : ''}`} style={urgent ? undefined : { color: '#4A3728' }}>{value}</p>
+                  </div>
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: iconBg }}>
+                    <Icon className="w-6 h-6" style={{ color: iconColor }} />
+                  </div>
                 </div>
-                <div className="p-3 rounded-lg" style={{ backgroundColor: iconBg }}>
-                  <Icon className="w-6 h-6" style={{ color: iconColor }} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          )
+        })}
       </div>
 
       {/* Charts Row 1 */}

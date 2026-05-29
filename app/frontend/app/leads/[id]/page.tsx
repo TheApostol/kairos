@@ -504,6 +504,116 @@ export default function LeadDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Tasks / Follow-up */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-semibold uppercase tracking-wide" style={{ color: '#6B4F3A' }}>
+                  <span className="flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4" />
+                    Tareas / Follow-up ({tasks.filter((t) => !t.completado).length})
+                  </span>
+                </CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowTaskForm(!showTaskForm)}
+                  style={{ borderColor: '#C9A040', color: '#C9A040' }}
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Agregar tarea
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {showTaskForm && (
+                <div className="mb-4 p-4 rounded-lg space-y-3" style={{ backgroundColor: 'rgba(201,160,64,0.07)' }}>
+                  <Input
+                    value={newTaskTitulo}
+                    onChange={(e) => setNewTaskTitulo(e.target.value)}
+                    placeholder="Título de la tarea..."
+                    className="bg-white"
+                  />
+                  <Input
+                    type="date"
+                    value={newTaskFecha}
+                    onChange={(e) => setNewTaskFecha(e.target.value)}
+                    className="bg-white"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setShowTaskForm(false)
+                        setNewTaskTitulo('')
+                        setNewTaskFecha('')
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleAddTask}
+                      disabled={!newTaskTitulo.trim() || savingTask}
+                      style={{ backgroundColor: '#C9A040', color: 'white' }}
+                    >
+                      {savingTask ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                      Guardar
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {tasks.length === 0 ? (
+                <div className="text-center py-6 text-slate-400">
+                  <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Sin tareas pendientes</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {[...tasks]
+                    .sort((a, b) => Number(a.completado) - Number(b.completado))
+                    .map((task) => (
+                      <div
+                        key={task.id}
+                        className={`flex items-start gap-3 p-3 rounded-lg transition-opacity ${task.completado ? 'opacity-50' : ''}`}
+                        style={{ backgroundColor: task.completado ? '#f8f5f0' : 'rgba(201,160,64,0.07)' }}
+                      >
+                        <button
+                          onClick={() => handleToggleTask(task)}
+                          className="mt-0.5 flex-shrink-0"
+                          aria-label={task.completado ? 'Marcar incompleta' : 'Marcar completa'}
+                        >
+                          {task.completado
+                            ? <CheckSquare className="w-5 h-5" style={{ color: '#C9A040' }} />
+                            : <Square className="w-5 h-5 text-slate-400" />
+                          }
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium ${task.completado ? 'line-through text-slate-400' : 'text-slate-800'}`}>
+                            {task.titulo}
+                          </p>
+                          {task.descripcion && (
+                            <p className="text-xs text-slate-500 mt-0.5">{task.descripcion}</p>
+                          )}
+                        </div>
+                        {task.fecha_vencimiento && (
+                          <span className={`text-xs flex-shrink-0 px-2 py-0.5 rounded-full font-medium ${
+                            !task.completado && task.fecha_vencimiento < new Date().toISOString().slice(0, 10)
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-amber-50 text-amber-700'
+                          }`}>
+                            {format(new Date(task.fecha_vencimiento + 'T00:00:00'), 'dd/MM')}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

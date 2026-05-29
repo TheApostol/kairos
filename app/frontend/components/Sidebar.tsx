@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
   Users,
+  KanbanSquare,
   Megaphone,
   ShoppingCart,
   BookOpen,
@@ -19,6 +20,7 @@ import { getLeads } from '@/lib/api'
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/leads', label: 'Leads', icon: Users, badge: true },
+  { href: '/pipeline', label: 'Pipeline', icon: KanbanSquare },
   { href: '/campaigns', label: 'Campañas', icon: Megaphone },
   { href: '/orders', label: 'Órdenes', icon: ShoppingCart },
   { href: '/catalog', label: 'Catálogo', icon: BookOpen },
