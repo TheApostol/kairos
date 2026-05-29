@@ -1,0 +1,24 @@
+{
+  "brand": {
+    "brown": "#4A3728",
+    "brown_light": "#6B4F3A",
+    "gold": "#C9A040",
+    "gold_light": "#D4B870",
+    "white": "#FFFFFF",
+    "cream": "#FAF7F2",
+    "sidebar_bg": "#2C1F16",
+    "sidebar_hover": "#3D2B1F"
+  },
+  "leads": {
+    "score_high": "#22C55E",
+    "score_mid": "#EAB308",
+    "score_low": "#EF4444"
+  },
+  "status": {
+    "nuevo": "#3B82F6",
+    "contactado": "#F59E0B",
+    "interesado": "#F97316",
+    "cliente": "#22C55E",
+    "descartado": "#6B7280"
+  }
+}
