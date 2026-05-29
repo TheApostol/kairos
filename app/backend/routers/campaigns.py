@@ -218,6 +218,25 @@ def quick_send_leads(body: QuickSendRequest, background_tasks: BackgroundTasks):
     }
 
 
+@router.post("/send-catalogue")
+def send_catalogue_to_clients(background_tasks: BackgroundTasks):
+    params = {"select": "*", "email": "neq.", "estado": "in.(cliente,interesado)", "limit": 1000}
+    leads = db.raw_select("leads", params)
+
+    from config import settings as _settings
+    catalogue_url = "https://kairos-anuu.onrender.com/products/export-catalog"
+    asunto = "Catálogo de productos actualizado — Kairos"
+    cuerpo = (
+        "Hola {empresa},\n\n"
+        "Actualizamos nuestro catálogo de productos con los últimos precios y disponibilidad.\n\n"
+        f"Podés ver y descargar el catálogo completo aquí:\n{catalogue_url}\n\n"
+        "Quedamos a tu disposición para cualquier consulta.\n\nSaludos,\nEquipo Kairos"
+    )
+
+    background_tasks.add_task(_run_quick_email, leads, asunto, cuerpo)
+    return {"queued": len(leads), "message": f"Enviando catálogo a {len(leads)} clientes e interesados"}
+
+
 @router.get("/stats")
 def get_campaigns_stats():
     campaigns = db.select("campaigns", limit=1000)

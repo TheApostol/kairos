@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { getProducts, createProduct, updateProduct, getApiUrl } from '@/lib/api'
+import { useEffect, useState, useRef } from 'react'
+import { getProducts, createProduct, updateProduct, getApiUrl, sendCatalogueToClients } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Loader2, Package, Pencil, Star, FileDown } from 'lucide-react'
+import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users } from 'lucide-react'
 
 interface Product {
   id: number
@@ -58,6 +58,67 @@ const emptyForm = {
   stock: '',
   activo: true,
   destacado: false,
+  imagen_url: '',
+}
+
+function ImageUploader({ value, onChange }: { value: string; onChange: (url: string) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleFile = (file: File) => {
+    const canvas = document.createElement('canvas')
+    const img = document.createElement('img')
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      img.onload = () => {
+        const MAX = 800
+        let { width, height } = img
+        if (width > MAX || height > MAX) {
+          if (width > height) { height = (height / width) * MAX; width = MAX }
+          else { width = (width / height) * MAX; height = MAX }
+        }
+        canvas.width = width; canvas.height = height
+        canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
+        onChange(canvas.toDataURL('image/jpeg', 0.75))
+      }
+      img.src = e.target?.result as string
+    }
+    reader.readAsDataURL(file)
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label>Imagen del producto</Label>
+      <div
+        className="h-32 border-2 border-dashed rounded-lg flex items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors overflow-hidden relative"
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f?.type.startsWith('image/')) handleFile(f) }}
+      >
+        {value ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={value} alt="preview" className="h-full w-full object-contain" />
+        ) : (
+          <div className="text-center text-slate-400">
+            <Upload className="w-6 h-6 mx-auto mb-1" />
+            <p className="text-xs">Click o arrastrá una imagen</p>
+          </div>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }}
+      />
+      {value && (
+        <Button type="button" variant="ghost" size="sm" className="text-red-500 h-7 px-2"
+          onClick={(e) => { e.stopPropagation(); onChange('') }}>
+          Eliminar imagen
+        </Button>
+      )}
+    </div>
+  )
 }
 
 export default function CatalogPage() {
@@ -67,6 +128,8 @@ export default function CatalogPage() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
+  const [notifying, setNotifying] = useState(false)
+  const [notifyResult, setNotifyResult] = useState('')
 
   // PDF Export dialog
   const [showPdfDialog, setShowPdfDialog] = useState(false)
@@ -97,6 +160,7 @@ export default function CatalogPage() {
       stock: String(product.stock ?? ''),
       activo: product.activo ?? true,
       destacado: product.destacado ?? false,
+      imagen_url: product.imagen_url ?? '',
     })
     setShowDialog(true)
   }
@@ -113,6 +177,7 @@ export default function CatalogPage() {
         stock: form.stock ? parseInt(form.stock) : undefined,
         activo: form.activo,
         destacado: form.destacado,
+        imagen_url: form.imagen_url || undefined,
       }
       if (editingProduct) {
         const updated = await updateProduct(editingProduct.id, payload)
@@ -171,12 +236,34 @@ export default function CatalogPage() {
             <FileDown className="w-4 h-4" />
             Exportar PDF
           </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              setNotifying(true)
+              try {
+                const r = await sendCatalogueToClients()
+                setNotifyResult(`✓ Catálogo enviado a ${r.queued} clientes`)
+                setTimeout(() => setNotifyResult(''), 5000)
+              } catch { setNotifyResult('Error al enviar') }
+              finally { setNotifying(false) }
+            }}
+            disabled={notifying}
+            className="gap-2"
+          >
+            {notifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+            {notifying ? 'Enviando...' : 'Notificar Clientes'}
+          </Button>
           <Button onClick={openAddDialog} className="gap-2">
             <Plus className="w-4 h-4" />
             Agregar Producto
           </Button>
         </div>
       </div>
+      {notifyResult && (
+        <p className={`text-sm font-medium -mt-3 ${notifyResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
+          {notifyResult}
+        </p>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center h-48">
@@ -288,6 +375,8 @@ export default function CatalogPage() {
             <DialogTitle>{editingProduct ? 'Editar Producto' : 'Nuevo Producto'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
+            <ImageUploader value={form.imagen_url} onChange={(v) => setForm({ ...form, imagen_url: v })} />
+
             <div className="space-y-1.5">
               <Label>Nombre *</Label>
               <Input

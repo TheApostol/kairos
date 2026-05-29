@@ -85,6 +85,10 @@ export async function getCampaignStats() {
   return apiFetch('/campaigns/stats')
 }
 
+export async function sendCatalogueToClients() {
+  return apiFetch('/campaigns/send-catalogue', { method: 'POST' })
+}
+
 export async function quickSendLeads(data: {
   lead_ids: number[]
   tipo: 'email' | 'whatsapp'
