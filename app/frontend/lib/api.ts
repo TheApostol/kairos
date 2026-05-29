@@ -102,6 +102,35 @@ export async function quickSendLeads(data: {
   })
 }
 
+export async function getFollowupWhatsappLinks(diasSinRespuesta: number = 3) {
+  return apiFetch(`/campaigns/followup-whatsapp?dias_sin_respuesta=${diasSinRespuesta}`, { method: 'POST' })
+}
+
+// Lead Tasks
+export async function getLeadTasks(id: string | number) {
+  return apiFetch(`/leads/${id}/tasks`)
+}
+
+export async function createLeadTask(id: string | number, data: { titulo: string; descripcion?: string; fecha_vencimiento?: string }) {
+  return apiFetch(`/leads/${id}/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function updateLeadTask(leadId: string | number, taskId: string | number, data: { completado?: boolean; titulo?: string; fecha_vencimiento?: string }) {
+  return apiFetch(`/leads/${leadId}/tasks/${taskId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function getTodayTasks() {
+  return apiFetch('/leads/tasks/today')
+}
+
 // Orders
 export async function getOrders(params?: Record<string, string>) {
   const query = params ? '?' + new URLSearchParams(params).toString() : ''

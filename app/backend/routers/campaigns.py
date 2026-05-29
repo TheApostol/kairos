@@ -1,7 +1,7 @@
 import json
 import re
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
@@ -235,6 +235,54 @@ def send_catalogue_to_clients(background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_run_quick_email, leads, asunto, cuerpo)
     return {"queued": len(leads), "message": f"Enviando catálogo a {len(leads)} clientes e interesados"}
+
+
+@router.post("/followup-whatsapp")
+def get_followup_whatsapp_links(dias_sin_respuesta: int = 3):
+    cutoff = (datetime.utcnow() - timedelta(days=dias_sin_respuesta)).isoformat()
+
+    # Find leads that received an email but haven't responded and the send was at least N days ago
+    sent = db.raw_select("campaign_sends", {
+        "select": "lead_id,enviado_at,estado",
+        "estado": "eq.enviado",
+        "enviado_at": f"lte.{cutoff}",
+        "limit": 500,
+    })
+
+    lead_ids = list({s["lead_id"] for s in sent if s.get("lead_id")})
+
+    if not lead_ids:
+        return {"links": [], "total": 0, "message": "No hay leads para hacer seguimiento"}
+
+    ids_str = ",".join(str(i) for i in lead_ids[:200])
+    leads = db.raw_select("leads", {
+        "select": "*",
+        "id": f"in.({ids_str})",
+        "limit": 200,
+    })
+
+    links = []
+    for lead in leads:
+        phone = lead.get("whatsapp") or lead.get("telefono", "") or ""
+        phone_clean = re.sub(r"[^0-9]", "", phone)
+        if not phone_clean:
+            continue
+        if len(phone_clean) <= 10:
+            phone_clean = "549" + phone_clean.lstrip("0")
+        elif phone_clean.startswith("0"):
+            phone_clean = "549" + phone_clean[1:]
+        empresa = lead.get("empresa", "")
+        msg = urllib.parse.quote(
+            f"Hola {empresa}! Te escribimos desde Kairos para hacer un seguimiento de nuestro email anterior. "
+            f"¿Pudieron verlo? Quedamos a disposición para cualquier consulta sobre nuestros productos 🌿"
+        )
+        links.append({
+            "empresa": empresa,
+            "telefono": lead.get("telefono", ""),
+            "url": f"https://wa.me/{phone_clean}?text={msg}",
+        })
+
+    return {"links": links, "total": len(links), "dias": dias_sin_respuesta}
 
 
 @router.get("/stats")

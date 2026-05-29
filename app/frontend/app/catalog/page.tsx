@@ -124,6 +124,8 @@ function ImageUploader({ value, onChange }: { value: string; onChange: (url: str
 export default function CatalogPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
+  const [selectedCategory, setSelectedCategory] = useState('')
+  const [categories, setCategories] = useState<string[]>([])
   const [showDialog, setShowDialog] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [form, setForm] = useState(emptyForm)
@@ -138,7 +140,12 @@ export default function CatalogPage() {
 
   useEffect(() => {
     getProducts()
-      .then((data) => setProducts(data.items ?? data ?? []))
+      .then((data) => {
+        const items: Product[] = data.items ?? data ?? []
+        setProducts(items)
+        const cats = Array.from(new Set(items.map((p) => p.categoria).filter(Boolean))) as string[]
+        setCategories(cats)
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
@@ -217,12 +224,16 @@ export default function CatalogPage() {
     setSelectedForPdf(next)
   }
 
+  const filteredProducts = selectedCategory
+    ? products.filter((p) => p.categoria === selectedCategory)
+    : products
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Catálogo</h1>
-          <p className="text-slate-500 mt-1">{products.length} productos</p>
+          <p className="text-slate-500 mt-1">{filteredProducts.length} productos</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -265,19 +276,41 @@ export default function CatalogPage() {
         </p>
       )}
 
+      {categories.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setSelectedCategory('')}
+            className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${selectedCategory === '' ? 'text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            style={selectedCategory === '' ? { backgroundColor: '#4A3728' } : {}}
+          >
+            Todos
+          </button>
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-3 py-1 rounded-full text-sm font-medium capitalize transition-colors ${selectedCategory === cat ? 'text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              style={selectedCategory === cat ? { backgroundColor: '#C9A040' } : {}}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center h-48">
           <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
         </div>
-      ) : products.length === 0 ? (
+      ) : filteredProducts.length === 0 ? (
         <div className="text-center py-16 text-slate-400">
           <Package className="w-12 h-12 mx-auto mb-3 opacity-40" />
-          <p>No hay productos en el catálogo</p>
-          <Button onClick={openAddDialog} className="mt-4">Agregar primer producto</Button>
+          <p>{products.length === 0 ? 'No hay productos en el catálogo' : 'No hay productos en esta categoría'}</p>
+          {products.length === 0 && <Button onClick={openAddDialog} className="mt-4">Agregar primer producto</Button>}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {products.map((product) => (
+          {filteredProducts.map((product) => (
             <Card
               key={product.id}
               className={`relative overflow-hidden ${product.activo === false ? 'opacity-60' : ''}`}

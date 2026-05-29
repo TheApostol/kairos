@@ -96,6 +96,7 @@ export default function LeadsPage() {
   const [sending, setSending] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [sendResult, setSendResult] = useState('')
+  const [aiError, setAiError] = useState('')
 
   const fetchLeads = useCallback(async () => {
     setLoading(true)
@@ -151,7 +152,7 @@ export default function LeadsPage() {
     setWaLinks(null)
     setSendResult('')
     if (type === 'catalogo') {
-      const catalogUrl = getApiUrl('/products/export-catalog')
+      const catalogUrl = 'https://kairos.polkorp.com/public/catalog'
       setEmailSubject('Catálogo de Productos Kairos')
       setEmailBody(`Hola, te compartimos nuestro catálogo de productos:\n${catalogUrl}\n\nQuedamos a tu disposición para cualquier consulta.`)
       setWaMessage(`Hola! Te compartimos nuestro catálogo de productos 🌿\n${catalogUrl}`)
@@ -200,6 +201,7 @@ export default function LeadsPage() {
 
   const handleGenerateAI = async () => {
     setGenerating(true)
+    setAiError('')
     try {
       const segDesc = [
         rubro !== 'all' ? rubro : 'tiendas holísticas y de sahumerios',
@@ -211,8 +213,8 @@ export default function LeadsPage() {
       })
       if (result.asunto) setEmailSubject(result.asunto)
       if (result.cuerpo) setEmailBody(result.cuerpo)
-    } catch {
-      // keep existing text
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Error al generar. Verificá que ANTHROPIC_API_KEY esté configurada en Render.')
     } finally {
       setGenerating(false)
     }
@@ -528,18 +530,23 @@ export default function LeadsPage() {
               {(contactType === 'email' || contactType === 'catalogo') && (
                 <>
                   {contactType === 'email' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-2 w-full border-dashed"
-                      onClick={handleGenerateAI}
-                      disabled={generating}
-                    >
-                      {generating
-                        ? <Loader2 className="w-4 h-4 animate-spin" />
-                        : <Sparkles className="w-4 h-4 text-amber-500" />}
-                      {generating ? 'Generando con IA...' : 'Generar con IA en español'}
-                    </Button>
+                    <div className="space-y-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 w-full border-dashed"
+                        onClick={handleGenerateAI}
+                        disabled={generating}
+                      >
+                        {generating
+                          ? <Loader2 className="w-4 h-4 animate-spin" />
+                          : <Sparkles className="w-4 h-4 text-amber-500" />}
+                        {generating ? 'Generando con IA...' : 'Generar con IA en español'}
+                      </Button>
+                      {aiError && (
+                        <p className="text-xs text-red-600">{aiError}</p>
+                      )}
+                    </div>
                   )}
                   <div className="space-y-1.5">
                     <Label>Asunto</Label>

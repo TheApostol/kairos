@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { getLead, updateLead, createLeadNote, getOrders } from '@/lib/api'
+import { getLead, updateLead, createLeadNote, getOrders, getLeadTasks, createLeadTask, updateLeadTask } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import {
   ArrowLeft,
   Loader2,
@@ -29,6 +30,10 @@ import {
   ShoppingCart,
   Calendar,
   FileText,
+  CheckSquare,
+  Square,
+  Plus,
+  ClipboardList,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -57,6 +62,16 @@ interface Order {
   numero: string
   estado: string
   total: number
+  created_at: string
+}
+
+interface Task {
+  id: number
+  lead_id: number
+  titulo: string
+  descripcion?: string
+  fecha_vencimiento?: string
+  completado: boolean
   created_at: string
 }
 
@@ -116,6 +131,13 @@ export default function LeadDetailPage() {
   const [estado, setEstado] = useState('')
   const [observaciones, setObservaciones] = useState('')
   const [hasChanges, setHasChanges] = useState(false)
+
+  // Tasks
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [showTaskForm, setShowTaskForm] = useState(false)
+  const [newTaskTitulo, setNewTaskTitulo] = useState('')
+  const [newTaskFecha, setNewTaskFecha] = useState('')
+  const [savingTask, setSavingTask] = useState(false)
 
   useEffect(() => {
     Promise.all([getLead(id), getOrders({ lead_id: id })])

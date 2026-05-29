@@ -2,7 +2,7 @@ import csv
 import io
 import math
 from typing import Optional
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from datetime import datetime
@@ -16,6 +16,19 @@ class LeadUpdate(BaseModel):
     estado: Optional[str] = None
     observaciones: Optional[str] = None
     asignado_a: Optional[str] = None
+
+
+class TaskCreate(BaseModel):
+    titulo: str
+    descripcion: Optional[str] = None
+    fecha_vencimiento: Optional[str] = None
+
+
+class TaskUpdate(BaseModel):
+    titulo: Optional[str] = None
+    descripcion: Optional[str] = None
+    fecha_vencimiento: Optional[str] = None
+    completado: Optional[bool] = None
 
 
 def _build_filters(
@@ -161,6 +174,95 @@ def get_rubros():
     leads = db.select_all("leads", select_cols="rubro")
     rubros = sorted({l.get("rubro") for l in leads if l.get("rubro")})
     return {"rubros": rubros}
+
+
+@router.get("/tasks/today")
+def get_today_tasks():
+    today = datetime.utcnow().date().isoformat()
+    tasks = db.raw_select("tasks", {
+        "select": "*",
+        "completado": "eq.false",
+        "fecha_vencimiento": f"lte.{today}",
+        "order": "fecha_vencimiento.asc",
+        "limit": 50,
+    })
+    return {"tasks": tasks, "total": len(tasks)}
+
+
+@router.post("/import")
+async def import_leads_csv(file: UploadFile = File(...)):
+    content = await file.read()
+    text = content.decode("utf-8-sig")  # utf-8-sig handles Excel BOM
+    reader = csv.DictReader(io.StringIO(text))
+
+    # Normalize column names: strip whitespace, lowercase
+    inserted = 0
+    skipped = 0
+    errors = []
+
+    FIELD_MAP = {
+        "empresa": ["empresa", "nombre", "name", "company"],
+        "telefono": ["telefono", "teléfono", "phone", "tel"],
+        "email": ["email", "correo", "mail"],
+        "ciudad": ["ciudad", "city"],
+        "provincia": ["provincia", "province", "estado"],
+        "rubro": ["rubro", "categoria", "category", "industry"],
+        "website": ["website", "web", "url", "sitio"],
+        "observaciones": ["observaciones", "notas", "notes", "comments"],
+    }
+
+    for row in reader:
+        row_lower = {k.strip().lower(): v.strip() for k, v in row.items() if k}
+
+        record = {"estado": "nuevo", "fuente": "CSV Import"}
+        for field, aliases in FIELD_MAP.items():
+            for alias in aliases:
+                if alias in row_lower and row_lower[alias]:
+                    record[field] = row_lower[alias]
+                    break
+
+        if not record.get("empresa"):
+            skipped += 1
+            continue
+
+        # Deduplicate by empresa name
+        try:
+            existing = db.select("leads", filters={"empresa": f"eq.{record['empresa']}"}, limit=1)
+            if existing:
+                skipped += 1
+                continue
+            db.insert("leads", record)
+            inserted += 1
+        except Exception as e:
+            errors.append(str(e)[:100])
+
+    return {"inserted": inserted, "skipped": skipped, "errors": errors[:5]}
+
+
+@router.post("/{lead_id}/tasks")
+def create_task(lead_id: str, body: TaskCreate):
+    task = db.insert("tasks", {
+        "lead_id": lead_id,
+        "titulo": body.titulo,
+        "descripcion": body.descripcion,
+        "fecha_vencimiento": body.fecha_vencimiento,
+        "completado": False,
+        "created_at": datetime.utcnow().isoformat(),
+    })
+    return task
+
+
+@router.get("/{lead_id}/tasks")
+def get_tasks(lead_id: str):
+    tasks = db.select("tasks", filters={"lead_id": f"eq.{lead_id}"}, order="fecha_vencimiento.asc.nullslast")
+    return tasks
+
+
+@router.patch("/{lead_id}/tasks/{task_id}")
+def update_task(lead_id: str, task_id: str, body: TaskUpdate):
+    update_data = body.model_dump(exclude_none=True)
+    updated = db.update("tasks", task_id, update_data)
+    return updated
 
 
 @router.get("/{lead_id}")
