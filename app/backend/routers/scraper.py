@@ -303,7 +303,6 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                 "progress": progress,
                 "new_found": len(results),
                 "total_found": len(seen_ids),
-                "current_query": query,
             })
 
         db.update("scraper_jobs", job_id, {
@@ -488,7 +487,6 @@ async def stream_latest_progress():
             job = jobs[0]
             status = job.get("status", "")
             progress = job.get("progress", 0)
-            current_query = job.get("current_query", "")
 
             payload: dict = {
                 "progress": progress,
@@ -496,8 +494,6 @@ async def stream_latest_progress():
                 "new_found": job.get("new_found", 0),
                 "done": status in ("completed", "failed"),
             }
-            if current_query:
-                payload["query"] = current_query
             if status == "failed":
                 payload["error"] = job.get("error_msg", "Error desconocido")
 
