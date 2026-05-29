@@ -12,6 +12,7 @@ import {
   ShoppingCart,
   BookOpen,
   Search,
+  Building2,
   X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -20,6 +21,7 @@ import { getLeads } from '@/lib/api'
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/leads', label: 'Leads', icon: Users, badge: true },
+  { href: '/mayoristas', label: 'Mayoristas', icon: Building2 },
   { href: '/pipeline', label: 'Pipeline', icon: KanbanSquare },
   { href: '/campaigns', label: 'Campañas', icon: Megaphone },
   { href: '/orders', label: 'Órdenes', icon: ShoppingCart },

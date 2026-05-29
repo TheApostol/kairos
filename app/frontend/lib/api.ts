@@ -200,12 +200,20 @@ export async function getScraperHistory() {
   return apiFetch('/scraper/history')
 }
 
-export async function runScraper() {
-  return apiFetch('/scraper/run', { method: 'POST' })
+export async function runScraper(tipo_cliente: 'lead' | 'mayorista' = 'lead') {
+  return apiFetch('/scraper/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo_cliente }),
+  })
 }
 
 export async function runEnrichment() {
-  return apiFetch('/scraper/enrich', { method: 'POST' })
+  return apiFetch('/scraper/enrich', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
 }
 
 export const API_BASE = API

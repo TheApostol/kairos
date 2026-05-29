@@ -41,6 +41,7 @@ def _build_filters(
     con_telefono: Optional[bool],
     score_min: Optional[float],
     score_max: Optional[float],
+    tipo_cliente: Optional[str] = None,
 ) -> dict:
     params: dict = {"select": "*", "order": "created_at.desc"}
     if empresa:
@@ -61,6 +62,8 @@ def _build_filters(
         params["score_ia"] = f"gte.{int(score_min)}"
     if score_max is not None:
         params["score_ia"] = f"lte.{int(score_max)}"
+    if tipo_cliente:
+        params["tipo_cliente"] = f"eq.{tipo_cliente}"
     return params
 
 
@@ -75,10 +78,11 @@ def list_leads(
     con_telefono: Optional[bool] = None,
     score_min: Optional[float] = None,
     score_max: Optional[float] = None,
+    tipo_cliente: Optional[str] = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
 ):
-    params = _build_filters(empresa, rubro, provincia, ciudad, estado, con_email, con_telefono, score_min, score_max)
+    params = _build_filters(empresa, rubro, provincia, ciudad, estado, con_email, con_telefono, score_min, score_max, tipo_cliente)
 
     # Count with same filters (excluding pagination params)
     count_filters = {k: v for k, v in params.items() if k not in ("select", "order")}

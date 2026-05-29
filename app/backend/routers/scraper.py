@@ -2,7 +2,7 @@ import asyncio
 import re
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
@@ -18,6 +18,7 @@ class ScraperStartRequest(BaseModel):
     queries: Optional[List[str]] = None
     google_api_key: Optional[str] = None
     max_per_query: int = 60
+    tipo_cliente: str = "lead"  # "lead" or "mayorista"
 
 
 class EnrichRequest(BaseModel):
@@ -59,6 +60,24 @@ DEFAULT_QUERIES = [
     "tienda holistica La Plata",
     "tienda esoterica Neuquén",
     "tienda esoterica Santa Fe",
+]
+
+MAYORISTA_QUERIES = [
+    "distribuidor sahumerios Argentina",
+    "mayorista productos holísticos Argentina",
+    "distribuidor inciensos Argentina",
+    "mayorista velas aromaticas Argentina",
+    "distribuidor esencias aromáticas Argentina",
+    "importador sahumerios Argentina",
+    "mayorista productos esotéricos Argentina",
+    "distribuidor chakras aromaterapia Argentina",
+    "mayorista incienso sándalo nag champa Argentina",
+    "distribuidor tiendas espirituales Argentina",
+    "mayorista sahumerios Buenos Aires",
+    "distribuidor holístico Córdoba",
+    "mayorista aromaterapia Rosario",
+    "importador velas soja Argentina",
+    "distribuidor products naturales holísticos Argentina",
 ]
 
 
@@ -219,7 +238,7 @@ def _scrape_website(url: str) -> dict:
 # BACKGROUND TASKS
 # ─────────────────────────────────────────────
 
-def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_query: int):
+def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_query: int, tipo_cliente: str = "lead"):
     seen_ids: set = set()
     results = []
     total_queries = len(queries)
@@ -227,7 +246,7 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
     try:
         db.update("scraper_jobs", job_id, {
             "status": "running",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "total": total_queries,
             "progress": 0,
         })
@@ -285,15 +304,19 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                             else "",
                             "observaciones": "",
                             "fuente": "Google Places API",
-                            "fecha_extraccion": datetime.utcnow().date().isoformat(),
+                            "fecha_extraccion": datetime.now(timezone.utc).date().isoformat(),
                             "estado": "nuevo",
+                            "tipo_cliente": tipo_cliente,
                         }
                         record["score_ia"] = _score_lead(record)
 
                         try:
                             existing = db.select(
                                 "leads",
-                                filters={"empresa": f"eq.{record['empresa']}"},
+                                filters={
+                                    "empresa": f"eq.{record['empresa']}",
+                                    "tipo_cliente": f"eq.{tipo_cliente}",
+                                },
                                 limit=1,
                             )
                             if not existing:
@@ -321,7 +344,7 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
 
         db.update("scraper_jobs", job_id, {
             "status": "completed",
-            "completed_at": datetime.utcnow().isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
             "progress": 100,
             "new_found": len(results),
             "total_found": len(seen_ids),
@@ -331,7 +354,7 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
         db.update("scraper_jobs", job_id, {
             "status": "failed",
             "error_msg": str(exc),
-            "completed_at": datetime.utcnow().isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
         })
 
 
@@ -339,7 +362,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
     try:
         db.update("scraper_jobs", job_id, {
             "status": "running",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
         params = {"select": "*", "website": "neq.", "email": "eq.", "limit": 500}
@@ -366,7 +389,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                     update_data[field] = enrich[field]
 
             if update_data:
-                update_data["updated_at"] = datetime.utcnow().isoformat()
+                update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
                 db.update("leads", lead["id"], update_data)
                 enriched_count += 1
 
@@ -379,7 +402,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
 
         db.update("scraper_jobs", job_id, {
             "status": "completed",
-            "completed_at": datetime.utcnow().isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
             "progress": 100,
             "new_found": enriched_count,
             "total_found": total,
@@ -389,7 +412,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
         db.update("scraper_jobs", job_id, {
             "status": "failed",
             "error_msg": str(exc),
-            "completed_at": datetime.utcnow().isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
         })
 
 
@@ -406,7 +429,13 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
             detail="Google API key required. Pass google_api_key in the request body or set GOOGLE_API_KEY env var.",
         )
 
-    queries = body.queries or DEFAULT_QUERIES
+    tipo_cliente = body.tipo_cliente or "lead"
+    if body.queries:
+        queries = body.queries
+    elif tipo_cliente == "mayorista":
+        queries = MAYORISTA_QUERIES
+    else:
+        queries = DEFAULT_QUERIES
 
     job = db.insert("scraper_jobs", {
         "status": "pending",
@@ -415,16 +444,16 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
         "total": len(queries),
         "new_found": 0,
         "total_found": 0,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
-    job_id = job.get("id") or job.get("id")
+    job_id = job.get("id")
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create scraper job")
 
-    background_tasks.add_task(_run_scraper_job, str(job_id), queries, api_key, body.max_per_query)
+    background_tasks.add_task(_run_scraper_job, str(job_id), queries, api_key, body.max_per_query, tipo_cliente)
 
-    return {"job_id": job_id, "status": "pending", "queries_count": len(queries)}
+    return {"job_id": job_id, "status": "pending", "queries_count": len(queries), "tipo_cliente": tipo_cliente}
 
 
 @router.get("/jobs")
@@ -529,7 +558,7 @@ def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks):
         "progress": 0,
         "new_found": 0,
         "total_found": 0,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
     job_id = job.get("id")

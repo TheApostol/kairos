@@ -69,18 +69,17 @@ class SupabaseClient:
 
     def update(self, table: str, id: Any, data: dict) -> dict:
         params = {"id": f"eq.{id}"}
+        update_headers = {**self.headers, "Prefer": "return=minimal"}
         with httpx.Client(timeout=30) as client:
             resp = client.patch(
                 self._rest_url(table),
-                headers=self.headers,
+                headers=update_headers,
                 params=params,
                 json=data,
             )
-            resp.raise_for_status()
-            result = resp.json()
-            if isinstance(result, list) and result:
-                return result[0]
-            return result
+            if not resp.is_success:
+                raise Exception(f"Supabase PATCH error {resp.status_code}: {resp.text}")
+            return {}
 
     def delete(self, table: str, id: Any) -> None:
         params = {"id": f"eq.{id}"}
