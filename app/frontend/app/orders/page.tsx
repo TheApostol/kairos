@@ -166,9 +166,10 @@ function OrdersContent() {
         </div>
       ) : (
         /* Kanban Board */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-start">
+        <div className="flex gap-4 items-start overflow-x-auto pb-4 sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-5 sm:pb-0">
+          <style>{`.kanban-col { min-width: 240px; flex-shrink: 0; } @media (min-width: 640px) { .kanban-col { min-width: unset; flex-shrink: unset; } }`}</style>
           {ESTADOS.map((estado) => (
-            <div key={estado} className={`rounded-xl border-2 ${ESTADO_COLORS[estado]} p-3`}>
+            <div key={estado} className={`kanban-col rounded-xl border-2 ${ESTADO_COLORS[estado]} p-3`}>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-slate-700">{ESTADO_LABELS[estado]}</h3>
                 <span className="text-xs font-bold text-slate-500 bg-white/60 px-2 py-0.5 rounded-full">

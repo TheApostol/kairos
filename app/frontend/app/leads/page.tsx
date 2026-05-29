@@ -235,39 +235,26 @@ export default function LeadsPage() {
               No se encontraron leads
             </div>
           ) : (
-            <div className="overflow-x-auto">
-            <Table className="min-w-[750px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Empresa</TableHead>
-                  <TableHead>Ciudad / Provincia</TableHead>
-                  <TableHead>Teléfono</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Score</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Rubro</TableHead>
-                  <TableHead className="w-20">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Mobile: card list */}
+              <div className="sm:hidden divide-y">
                 {leads.map((lead) => (
-                  <TableRow
+                  <div
                     key={lead.id}
-                    className="cursor-pointer"
+                    className="flex items-start justify-between gap-3 px-4 py-3 cursor-pointer active:bg-slate-50"
                     onClick={() => router.push(`/leads/${lead.id}`)}
                   >
-                    <TableCell className="font-medium" style={{ color: '#4A3728' }}>{lead.empresa}</TableCell>
-                    <TableCell style={{ color: '#6B4F3A' }}>
-                      {[lead.ciudad, lead.provincia].filter(Boolean).join(', ') || '—'}
-                    </TableCell>
-                    <TableCell style={{ color: '#6B4F3A' }}>{lead.telefono || '—'}</TableCell>
-                    <TableCell style={{ color: '#6B4F3A' }}>
-                      {lead.email ? (
-                        <span className="text-blue-600">{lead.email}</span>
-                      ) : '—'}
-                    </TableCell>
-                    <TableCell><ScoreBadge score={lead.score} /></TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm truncate" style={{ color: '#4A3728' }}>{lead.empresa}</p>
+                      <p className="text-xs mt-0.5 truncate" style={{ color: '#6B4F3A' }}>
+                        {[lead.ciudad, lead.provincia].filter(Boolean).join(', ') || '—'}
+                      </p>
+                      {lead.telefono && (
+                        <p className="text-xs text-slate-500 mt-0.5">{lead.telefono}</p>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <ScoreBadge score={lead.score} />
                       <Select
                         value={lead.estado ?? 'nuevo'}
                         onValueChange={async (newEstado) => {
@@ -275,7 +262,7 @@ export default function LeadsPage() {
                           setLeads((prev) => prev.map((l) => l.id === lead.id ? { ...l, estado: newEstado } : l))
                         }}
                       >
-                        <SelectTrigger className="h-7 text-xs w-32 border-0 shadow-none p-1">
+                        <SelectTrigger className="h-7 text-xs w-28 border-0 shadow-none p-1">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -286,25 +273,83 @@ export default function LeadsPage() {
                           <SelectItem value="descartado">Descartado</SelectItem>
                         </SelectContent>
                       </Select>
-                    </TableCell>
-                    <TableCell className="text-slate-600 capitalize">{lead.rubro || '—'}</TableCell>
-                    <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          router.push(`/leads/${lead.id}`)
-                        }}
-                      >
-                        Ver
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+                    </div>
+                  </div>
                 ))}
-              </TableBody>
-            </Table>
-            </div>
+              </div>
+
+              {/* Desktop: full table */}
+              <div className="hidden sm:block overflow-x-auto">
+              <Table className="min-w-[750px]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Empresa</TableHead>
+                    <TableHead>Ciudad / Provincia</TableHead>
+                    <TableHead>Teléfono</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Score</TableHead>
+                    <TableHead>Estado</TableHead>
+                    <TableHead>Rubro</TableHead>
+                    <TableHead className="w-20">Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {leads.map((lead) => (
+                    <TableRow
+                      key={lead.id}
+                      className="cursor-pointer"
+                      onClick={() => router.push(`/leads/${lead.id}`)}
+                    >
+                      <TableCell className="font-medium" style={{ color: '#4A3728' }}>{lead.empresa}</TableCell>
+                      <TableCell style={{ color: '#6B4F3A' }}>
+                        {[lead.ciudad, lead.provincia].filter(Boolean).join(', ') || '—'}
+                      </TableCell>
+                      <TableCell style={{ color: '#6B4F3A' }}>{lead.telefono || '—'}</TableCell>
+                      <TableCell style={{ color: '#6B4F3A' }}>
+                        {lead.email ? (
+                          <span className="text-blue-600">{lead.email}</span>
+                        ) : '—'}
+                      </TableCell>
+                      <TableCell><ScoreBadge score={lead.score} /></TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Select
+                          value={lead.estado ?? 'nuevo'}
+                          onValueChange={async (newEstado) => {
+                            await updateLead(lead.id, { estado: newEstado })
+                            setLeads((prev) => prev.map((l) => l.id === lead.id ? { ...l, estado: newEstado } : l))
+                          }}
+                        >
+                          <SelectTrigger className="h-7 text-xs w-32 border-0 shadow-none p-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="nuevo">Nuevo</SelectItem>
+                            <SelectItem value="contactado">Contactado</SelectItem>
+                            <SelectItem value="interesado">Interesado</SelectItem>
+                            <SelectItem value="cliente">Cliente</SelectItem>
+                            <SelectItem value="descartado">Descartado</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell className="text-slate-600 capitalize">{lead.rubro || '—'}</TableCell>
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            router.push(`/leads/${lead.id}`)
+                          }}
+                        >
+                          Ver
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
