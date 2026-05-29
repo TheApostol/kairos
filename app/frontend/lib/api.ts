@@ -85,6 +85,10 @@ export async function getCampaignStats() {
   return apiFetch('/campaigns/stats')
 }
 
+export async function duplicateCampaign(id: string | number) {
+  return apiFetch(`/campaigns/${id}/duplicate`, { method: 'POST' })
+}
+
 export async function sendCatalogueToClients() {
   return apiFetch('/campaigns/send-catalogue', { method: 'POST' })
 }
