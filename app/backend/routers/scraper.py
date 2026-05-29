@@ -303,6 +303,7 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                 "progress": progress,
                 "new_found": len(results),
                 "total_found": len(seen_ids),
+                "current_query": query,
             })
 
         db.update("scraper_jobs", job_id, {
@@ -440,6 +441,68 @@ async def stream_job_progress(job_id: str):
             yield f"data: {json.dumps(payload)}\n\n"
 
             status = job.get("status")
+            if status in ("completed", "failed"):
+                return
+
+            await asyncio.sleep(2)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/run")
+def run_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
+    """Alias for /start — used by the frontend."""
+    return start_scraper(body, background_tasks)
+
+
+@router.get("/history")
+def get_history():
+    """Frontend-compatible alias for /jobs with mapped field names."""
+    jobs = db.select("scraper_jobs", order="created_at.desc", limit=20)
+    status_map = {"completed": "completado", "failed": "error", "running": "corriendo", "pending": "pendiente"}
+    items = [
+        {
+            "id": job.get("id"),
+            "started_at": job.get("started_at"),
+            "finished_at": job.get("completed_at"),
+            "estado": status_map.get(job.get("status", ""), job.get("status", "pendiente")),
+            "total_encontrados": job.get("total_found"),
+            "nuevos_agregados": job.get("new_found"),
+            "error": job.get("error_msg"),
+        }
+        for job in jobs
+    ]
+    return {"items": items}
+
+
+@router.get("/progress")
+async def stream_latest_progress():
+    """SSE stream for the most recent job — used by the frontend."""
+    async def event_generator():
+        while True:
+            jobs = db.select("scraper_jobs", order="created_at.desc", limit=1)
+            if not jobs:
+                yield f"data: {json.dumps({'done': True, 'progress': 0})}\n\n"
+                return
+
+            job = jobs[0]
+            status = job.get("status", "")
+            progress = job.get("progress", 0)
+            current_query = job.get("current_query", "")
+
+            payload: dict = {
+                "progress": progress,
+                "total_found": job.get("total_found", 0),
+                "new_found": job.get("new_found", 0),
+                "done": status in ("completed", "failed"),
+            }
+            if current_query:
+                payload["query"] = current_query
+            if status == "failed":
+                payload["error"] = job.get("error_msg", "Error desconocido")
+
+            yield f"data: {json.dumps(payload)}\n\n"
+
             if status in ("completed", "failed"):
                 return
 
