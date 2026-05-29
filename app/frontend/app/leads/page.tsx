@@ -31,8 +31,8 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { getLeads, getLeadStats, getLeadRubros, getApiUrl, updateLead, quickSendLeads } from '@/lib/api'
-import { Search, Download, ChevronLeft, ChevronRight, Loader2, Mail, MessageSquare, FileDown } from 'lucide-react'
+import { getLeads, getLeadStats, getLeadRubros, getApiUrl, updateLead, quickSendLeads, generateCampaignText } from '@/lib/api'
+import { Search, Download, ChevronLeft, ChevronRight, Loader2, Mail, MessageSquare, FileDown, Sparkles } from 'lucide-react'
 
 interface Lead {
   id: number
@@ -94,6 +94,7 @@ export default function LeadsPage() {
   const [waMessage, setWaMessage] = useState('')
   const [waLinks, setWaLinks] = useState<WaLink[] | null>(null)
   const [sending, setSending] = useState(false)
+  const [generating, setGenerating] = useState(false)
   const [sendResult, setSendResult] = useState('')
 
   const fetchLeads = useCallback(async () => {
@@ -194,6 +195,26 @@ export default function LeadsPage() {
       setWaLinks([])
     } finally {
       setSending(false)
+    }
+  }
+
+  const handleGenerateAI = async () => {
+    setGenerating(true)
+    try {
+      const segDesc = [
+        rubro !== 'all' ? rubro : 'tiendas holísticas y de sahumerios',
+        provincia !== 'all' ? `en ${provincia}` : 'en Argentina',
+      ].join(' ')
+      const result = await generateCampaignText({
+        tipo: 'email',
+        segmento_desc: segDesc,
+      })
+      if (result.asunto) setEmailSubject(result.asunto)
+      if (result.cuerpo) setEmailBody(result.cuerpo)
+    } catch {
+      // keep existing text
+    } finally {
+      setGenerating(false)
     }
   }
 
@@ -506,6 +527,20 @@ export default function LeadsPage() {
             <div className="space-y-3 py-2">
               {(contactType === 'email' || contactType === 'catalogo') && (
                 <>
+                  {contactType === 'email' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 w-full border-dashed"
+                      onClick={handleGenerateAI}
+                      disabled={generating}
+                    >
+                      {generating
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <Sparkles className="w-4 h-4 text-amber-500" />}
+                      {generating ? 'Generando con IA...' : 'Generar con IA en español'}
+                    </Button>
+                  )}
                   <div className="space-y-1.5">
                     <Label>Asunto</Label>
                     <Input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} placeholder="Asunto del email" />
@@ -514,9 +549,11 @@ export default function LeadsPage() {
                     <Label>Mensaje</Label>
                     <Textarea value={emailBody} onChange={(e) => setEmailBody(e.target.value)} rows={5} placeholder="Escribe tu mensaje..." />
                   </div>
-                  {contactType === 'catalogo' && (
-                    <p className="text-xs text-slate-500">El link al catálogo PDF está incluido en el mensaje.</p>
-                  )}
+                  <p className="text-xs text-slate-400">
+                    {contactType === 'catalogo'
+                      ? 'El link al catálogo PDF está incluido en el mensaje.'
+                      : 'Usá {empresa} para personalizar con el nombre de cada lead.'}
+                  </p>
                 </>
               )}
 

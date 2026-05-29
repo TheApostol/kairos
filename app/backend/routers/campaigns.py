@@ -149,18 +149,29 @@ def _execute_campaign(campaign_id: str):
     })
 
 
+def _personalize(template: str, lead: dict) -> str:
+    return (
+        template
+        .replace("{empresa}", lead.get("empresa") or "")
+        .replace("{ciudad}", lead.get("ciudad") or "")
+        .replace("{provincia}", lead.get("provincia") or "")
+        .replace("{rubro}", lead.get("rubro") or "")
+    )
+
+
 def _run_quick_email(leads: list, asunto: str, cuerpo: str):
-    html_body = "<p>" + cuerpo.replace("\n", "<br>") + "</p>"
     for lead in leads:
         email = lead.get("email", "")
         if not email:
             continue
+        body_personal = _personalize(cuerpo, lead)
+        html_personal = "<p>" + body_personal.replace("\n", "<br>") + "</p>"
         _send_email_brevo(
             to_email=email,
             to_name=lead.get("empresa", ""),
-            subject=asunto,
-            html_body=html_body,
-            text_body=cuerpo,
+            subject=_personalize(asunto, lead),
+            html_body=html_personal,
+            text_body=body_personal,
         )
 
 
