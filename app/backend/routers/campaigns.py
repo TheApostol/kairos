@@ -285,6 +285,35 @@ def get_followup_whatsapp_links(dias_sin_respuesta: int = 3):
     return {"links": links, "total": len(links), "dias": dias_sin_respuesta}
 
 
+@router.post("/{campaign_id}/duplicate")
+def duplicate_campaign(campaign_id: str):
+    campaigns = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+    if not campaigns:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    original = campaigns[0]
+    now = datetime.utcnow().isoformat()
+    new_data = {
+        "nombre": f"{original.get('nombre', 'Campaña')} (copia)",
+        "tipo": original.get("tipo", "email"),
+        "estado": "borrador",
+        "asunto": original.get("asunto"),
+        "cuerpo": original.get("cuerpo"),
+        "cuerpo_html": original.get("cuerpo_html"),
+        "segmento": original.get("segmento"),
+        "total_leads": 0,
+        "enviados": 0,
+        "abiertos": 0,
+        "clicks": 0,
+        "respondidos": 0,
+        "convertidos": 0,
+        "created_at": now,
+        "updated_at": now,
+    }
+    new_campaign = db.insert("campaigns", new_data)
+    return new_campaign
+
+
 @router.get("/stats")
 def get_campaigns_stats():
     campaigns = db.select("campaigns", limit=1000)

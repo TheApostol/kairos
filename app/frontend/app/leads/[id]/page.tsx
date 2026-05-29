@@ -140,16 +140,42 @@ export default function LeadDetailPage() {
   const [savingTask, setSavingTask] = useState(false)
 
   useEffect(() => {
-    Promise.all([getLead(id), getOrders({ lead_id: id })])
-      .then(([l, o]) => {
+    Promise.all([getLead(id), getOrders({ lead_id: id }), getLeadTasks(id)])
+      .then(([l, o, t]) => {
         setLead(l)
         setEstado(l.estado ?? 'nuevo')
         setObservaciones(l.observaciones ?? '')
         setOrders(o.items ?? o ?? [])
+        setTasks(Array.isArray(t) ? t : [])
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])
+
+  const handleAddTask = async () => {
+    if (!newTaskTitulo.trim()) return
+    setSavingTask(true)
+    try {
+      const task = await createLeadTask(id, {
+        titulo: newTaskTitulo.trim(),
+        fecha_vencimiento: newTaskFecha || undefined,
+      })
+      setTasks((prev) => [...prev, task])
+      setNewTaskTitulo('')
+      setNewTaskFecha('')
+      setShowTaskForm(false)
+    } catch {
+    } finally {
+      setSavingTask(false)
+    }
+  }
+
+  const handleToggleTask = async (task: Task) => {
+    try {
+      const updated = await updateLeadTask(id, task.id, { completado: !task.completado })
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, ...updated } : t)))
+    } catch {}
+  }
 
   const handleSave = async () => {
     setSaving(true)
