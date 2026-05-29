@@ -23,6 +23,7 @@ FAKE_EMAILS = ["nuvempago","ejemplo.com","example","domain","sentry","wix",
 CSV_FILES = [
     "base_holistica_20260529_0832_enriquecido.csv",
     "base_expansion_20260529_0859.csv",
+    "base_provincias_20260529_0934.csv",
 ]
 
 def clean(row):
