@@ -1,7 +1,7 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
-import Sidebar from '@/components/Sidebar'
+import MobileLayout from '@/components/MobileLayout'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -10,18 +10,18 @@ export const metadata: Metadata = {
   description: 'CRM interno para Kairos Distribuidora',
 }
 
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es">
       <body className={inter.className}>
-        <div className="flex h-screen overflow-hidden" style={{ backgroundColor: '#FAF7F2' }}>
-          <Sidebar />
-          <main className="flex-1 overflow-y-auto">
-            <div className="min-h-full p-6">
-              {children}
-            </div>
-          </main>
-        </div>
+        <MobileLayout>
+          {children}
+        </MobileLayout>
       </body>
     </html>
   )

@@ -149,7 +149,7 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Leads</h1>
           <p className="mt-1" style={{ color: '#6B4F3A' }}>{total.toLocaleString('es-AR')} leads en total</p>
@@ -238,7 +238,8 @@ export default function LeadsPage() {
               No se encontraron leads
             </div>
           ) : (
-            <Table>
+            <div className="overflow-x-auto">
+            <Table className="min-w-[750px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Empresa</TableHead>
@@ -287,6 +288,7 @@ export default function LeadsPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

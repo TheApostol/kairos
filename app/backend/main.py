@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.backend.routers import leads, scraper, campaigns, orders, products
+from routers import leads, scraper, campaigns, orders, products
 
 app = FastAPI(
     title="Kairos CRM API",

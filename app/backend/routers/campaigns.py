@@ -4,8 +4,8 @@ from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
-from app.backend.services.supabase_client import db
-from app.backend.config import settings
+from services.supabase_client import db
+from config import settings
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -144,10 +144,29 @@ def _execute_campaign(campaign_id: str):
 # ROUTES
 # ─────────────────────────────────────────────
 
+@router.get("/stats")
+def get_campaigns_stats():
+    campaigns = db.select("campaigns", limit=1000)
+    total = len(campaigns)
+    emails_enviados = sum(int(c.get("enviados") or 0) for c in campaigns)
+    all_abiertos = [c for c in campaigns if (c.get("enviados") or 0) > 0]
+    tasa_promedio = 0.0
+    if all_abiertos:
+        tasas = [100 * int(c.get("abiertos") or 0) / int(c.get("enviados") or 1) for c in all_abiertos]
+        tasa_promedio = round(sum(tasas) / len(tasas), 1)
+    conversiones = sum(int(c.get("convertidos") or 0) for c in campaigns)
+    return {
+        "total": total,
+        "emails_enviados": emails_enviados,
+        "tasa_apertura_promedio": tasa_promedio,
+        "conversiones": conversiones,
+    }
+
+
 @router.get("")
 def list_campaigns():
     campaigns = db.select("campaigns", order="created_at.desc", limit=100)
-    return {"data": campaigns}
+    return {"items": campaigns, "total": len(campaigns)}
 
 
 @router.post("")

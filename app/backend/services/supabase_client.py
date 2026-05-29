@@ -1,6 +1,6 @@
 import httpx
 from typing import Any, Optional
-from app.backend.config import settings
+from config import settings
 
 
 class SupabaseClient:
@@ -40,10 +40,15 @@ class SupabaseClient:
         if offset is not None:
             params["offset"] = offset
 
+        headers = dict(self.headers)
+        if limit and limit > 1000:
+            headers["Range-Unit"] = "items"
+            headers["Range"] = f"0-{limit - 1}"
+
         with httpx.Client(timeout=30) as client:
             resp = client.get(
                 self._rest_url(table),
-                headers=self.headers,
+                headers=headers,
                 params=params,
             )
             resp.raise_for_status()
@@ -112,16 +117,41 @@ class SupabaseClient:
                 return int(total_str)
             return 0
 
+    def select_all(
+        self,
+        table: str,
+        filters: Optional[dict] = None,
+        select_cols: str = "*",
+        batch: int = 1000,
+    ) -> list:
+        """Fetch all rows by paginating in batches."""
+        results = []
+        offset = 0
+        while True:
+            page = self.select(table, filters=filters, select_cols=select_cols,
+                               limit=batch, offset=offset)
+            results.extend(page)
+            if len(page) < batch:
+                break
+            offset += batch
+        return results
+
     def raw_select(
         self,
         table: str,
         params: dict,
     ) -> list:
         """Low-level select with raw params dict for complex filters."""
+        headers = dict(self.headers)
+        limit = params.get("limit")
+        if limit and int(limit) > 1000:
+            headers["Range-Unit"] = "items"
+            headers["Range"] = f"0-{int(limit) - 1}"
+
         with httpx.Client(timeout=30) as client:
             resp = client.get(
                 self._rest_url(table),
-                headers=self.headers,
+                headers=headers,
                 params=params,
             )
             resp.raise_for_status()

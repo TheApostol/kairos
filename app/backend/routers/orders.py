@@ -3,7 +3,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.backend.services.supabase_client import db
+from services.supabase_client import db
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -13,16 +13,16 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 # ─────────────────────────────────────────────
 
 class OrderItemCreate(BaseModel):
-    product_id: Optional[str] = None
-    nombre: str
-    cantidad: int
-    precio_unit: float
+    product_id: Optional[int] = None
+    nombre: Optional[str] = None
+    cantidad: int = 1
+    precio_unit: Optional[float] = None
 
 
 class OrderCreate(BaseModel):
-    lead_id: Optional[str] = None
+    lead_id: Optional[int] = None
     numero: Optional[str] = None
-    estado: str = "pendiente"
+    estado: str = "borrador"
     moneda: str = "ARS"
     descuento: float = 0.0
     notas: Optional[str] = None
@@ -60,35 +60,37 @@ def _calculate_order_totals(items: list, descuento: float = 0.0) -> dict:
 def get_orders_stats():
     orders = db.select("orders", limit=10000)
 
-    total_revenue = 0.0
-    by_estado: dict = {}
-    monthly_revenue: dict = {}
+    activos_estados = {"borrador", "confirmado", "en_preparacion", "despachado"}
+    ordenes_activas = sum(1 for o in orders if o.get("estado") in activos_estados)
+
+    now = datetime.utcnow()
+    month_prefix = now.strftime("%Y-%m")
+    revenue_mes = 0.0
+    monthly_counts: dict = {}
 
     for order in orders:
-        estado = order.get("estado") or "desconocido"
-        by_estado[estado] = by_estado.get(estado, 0) + 1
-
-        total = order.get("total") or 0
+        total = 0.0
         try:
-            total = float(total)
+            total = float(order.get("total") or 0)
         except (ValueError, TypeError):
             total = 0.0
 
-        if order.get("estado") not in ("cancelado", "devuelto"):
-            total_revenue += total
+        fecha = order.get("created_at", "") or ""
+        if len(fecha) >= 7:
+            mk = fecha[:7]
+            monthly_counts[mk] = monthly_counts.get(mk, 0) + 1
+            if mk == month_prefix:
+                revenue_mes += total
 
-        fecha = order.get("fecha_pedido") or order.get("created_at", "")
-        if fecha and len(fecha) >= 7:
-            month_key = fecha[:7]  # YYYY-MM
-            monthly_revenue[month_key] = round(
-                monthly_revenue.get(month_key, 0.0) + total, 2
-            )
+    por_mes = [
+        {"mes": k, "count": v}
+        for k, v in sorted(monthly_counts.items())[-6:]
+    ]
 
     return {
-        "total_orders": len(orders),
-        "total_revenue": round(total_revenue, 2),
-        "by_estado": by_estado,
-        "monthly_revenue": dict(sorted(monthly_revenue.items())),
+        "ordenes_activas": ordenes_activas,
+        "revenue_mes": round(revenue_mes, 2),
+        "por_mes": por_mes,
     }
 
 
@@ -118,7 +120,23 @@ def list_orders(
         params["fecha_pedido"] = f"lte.{fecha_to}"
 
     orders = db.raw_select("orders", params)
-    return {"data": orders, "page": page, "per_page": per_page, "count": len(orders)}
+
+    # Enrich with empresa from leads
+    lead_ids = list({o["lead_id"] for o in orders if o.get("lead_id")})
+    empresa_map: dict = {}
+    if lead_ids:
+        for lid in lead_ids:
+            rows = db.select("leads", filters={"id": f"eq.{lid}"}, select_cols="id,empresa", limit=1)
+            if rows:
+                empresa_map[str(rows[0]["id"])] = rows[0].get("empresa")
+    for o in orders:
+        if o.get("lead_id"):
+            o["empresa"] = empresa_map.get(str(o["lead_id"]))
+
+    total = db.count("orders")
+    import math
+    pages = max(1, math.ceil(total / per_page))
+    return {"items": orders, "total": total, "page": page, "pages": pages}
 
 
 @router.post("")
@@ -126,15 +144,23 @@ def create_order(body: OrderCreate):
     numero = body.numero or _generate_order_number()
     now = datetime.utcnow().isoformat()
 
-    # Calculate item subtotals
+    # Calculate item subtotals, looking up product if needed
     items_data = []
     for item in body.items:
-        subtotal = round(item.cantidad * item.precio_unit, 2)
+        nombre = item.nombre
+        precio_unit = item.precio_unit or 0.0
+        if item.product_id:
+            prods = db.select("products", filters={"id": f"eq.{item.product_id}"}, limit=1)
+            if prods:
+                p = prods[0]
+                nombre = nombre or p.get("nombre", "")
+                precio_unit = precio_unit or float(p.get("precio_mayorista") or p.get("precio_minorista") or 0)
+        subtotal = round(item.cantidad * precio_unit, 2)
         items_data.append({
-            "product_id": item.product_id,
-            "nombre": item.nombre,
+            "product_id": str(item.product_id) if item.product_id else None,
+            "nombre": nombre or "Producto",
             "cantidad": item.cantidad,
-            "precio_unit": item.precio_unit,
+            "precio_unit": precio_unit,
             "subtotal": subtotal,
         })
 

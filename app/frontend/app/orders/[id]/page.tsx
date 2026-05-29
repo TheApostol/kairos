@@ -162,7 +162,7 @@ export default function OrderDetailPage() {
         precio_unit: prod?.precio_mayorista ?? updated[idx].precio_unit,
       }
     } else {
-      (updated[idx] as Record<string, unknown>)[field] = value
+      updated[idx] = { ...updated[idx], [field]: value }
     }
     setItems(updated)
     setHasChanges(true)

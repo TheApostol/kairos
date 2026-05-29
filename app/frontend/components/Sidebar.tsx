@@ -11,6 +11,7 @@ import {
   ShoppingCart,
   BookOpen,
   Search,
+  X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { getLeads } from '@/lib/api'
@@ -24,7 +25,11 @@ const navItems = [
   { href: '/scraper', label: 'Scraper', icon: Search },
 ]
 
-export default function Sidebar() {
+interface SidebarProps {
+  onClose?: () => void
+}
+
+export default function Sidebar({ onClose }: SidebarProps) {
   const pathname = usePathname()
   const [leadCount, setLeadCount] = useState<number | null>(null)
 
@@ -43,7 +48,7 @@ export default function Sidebar() {
     >
       {/* Logo */}
       <div
-        className="flex items-center px-5 py-4 border-b"
+        className="flex items-center justify-between px-5 py-4 border-b"
         style={{ borderColor: '#3D2B1F' }}
       >
         <Image
@@ -54,6 +59,16 @@ export default function Sidebar() {
           priority
           className="h-10 w-auto"
         />
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="lg:hidden p-1.5 rounded-md flex-shrink-0"
+            style={{ color: '#FAF7F2' }}
+            aria-label="Cerrar menú"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
       {/* Navigation */}
@@ -65,6 +80,7 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
+              onClick={onClose}
               className={cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group'
               )}

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.backend.services.supabase_client import db
+from services.supabase_client import db
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -340,7 +340,10 @@ def list_products(
         params["nombre"] = f"ilike.%{q}%"
 
     products = db.raw_select("products", params)
-    return {"data": products, "page": page, "per_page": per_page, "count": len(products)}
+    total = db.count("products")
+    import math
+    pages = max(1, math.ceil(total / per_page))
+    return {"items": products, "total": total, "page": page, "pages": pages}
 
 
 @router.post("")

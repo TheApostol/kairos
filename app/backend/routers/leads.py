@@ -1,12 +1,13 @@
 import csv
 import io
+import math
 from typing import Optional
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from datetime import datetime
 
-from app.backend.services.supabase_client import db
+from services.supabase_client import db
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -17,22 +18,20 @@ class LeadUpdate(BaseModel):
     asignado_a: Optional[str] = None
 
 
-@router.get("")
-def list_leads(
-    rubro: Optional[str] = None,
-    provincia: Optional[str] = None,
-    ciudad: Optional[str] = None,
-    estado: Optional[str] = None,
-    score_min: Optional[float] = None,
-    score_max: Optional[float] = None,
-    has_email: Optional[bool] = None,
-    has_phone: Optional[bool] = None,
-    q: Optional[str] = None,
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=50, ge=1, le=200),
-):
-    params = {"select": "*", "order": "created_at.desc"}
-
+def _build_filters(
+    empresa: Optional[str],
+    rubro: Optional[str],
+    provincia: Optional[str],
+    ciudad: Optional[str],
+    estado: Optional[str],
+    con_email: Optional[bool],
+    con_telefono: Optional[bool],
+    score_min: Optional[float],
+    score_max: Optional[float],
+) -> dict:
+    params: dict = {"select": "*", "order": "created_at.desc"}
+    if empresa:
+        params["empresa"] = f"ilike.%{empresa}%"
     if rubro:
         params["rubro"] = f"ilike.%{rubro}%"
     if provincia:
@@ -41,103 +40,105 @@ def list_leads(
         params["ciudad"] = f"ilike.%{ciudad}%"
     if estado:
         params["estado"] = f"eq.{estado}"
+    if con_email is True:
+        params["email"] = "not.is.null"
+    if con_telefono is True:
+        params["telefono"] = "not.is.null"
     if score_min is not None:
-        params["score_ia"] = f"gte.{score_min}"
+        params["score_ia"] = f"gte.{int(score_min)}"
     if score_max is not None:
-        # if score_min was already set, we need gte and lte together
-        # Supabase supports multiple filters by repeating query keys
-        # We'll handle this via raw URL approach
-        existing = params.get("score_ia", "")
-        if existing:
-            params["score_ia"] = f"gte.{score_min}"
-            params["score_ia_lte"] = f"lte.{score_max}"
-        else:
-            params["score_ia"] = f"lte.{score_max}"
-    if has_email is True:
-        params["email"] = "neq."
-    elif has_email is False:
-        params["email"] = "eq."
-    if has_phone is True:
-        params["telefono"] = "neq."
-    elif has_phone is False:
-        params["telefono"] = "eq."
-    if q:
-        params["empresa"] = f"ilike.%{q}%"
+        params["score_ia"] = f"lte.{int(score_max)}"
+    return params
 
-    offset = (page - 1) * per_page
-    params["limit"] = per_page
-    params["offset"] = offset
+
+@router.get("")
+def list_leads(
+    empresa: Optional[str] = None,
+    rubro: Optional[str] = None,
+    provincia: Optional[str] = None,
+    ciudad: Optional[str] = None,
+    estado: Optional[str] = None,
+    con_email: Optional[bool] = None,
+    con_telefono: Optional[bool] = None,
+    score_min: Optional[float] = None,
+    score_max: Optional[float] = None,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    params = _build_filters(empresa, rubro, provincia, ciudad, estado, con_email, con_telefono, score_min, score_max)
+
+    # Count with same filters (excluding pagination params)
+    count_filters = {k: v for k, v in params.items() if k not in ("select", "order")}
+    total = db.count("leads", count_filters) if count_filters else db.count("leads")
+
+    params["limit"] = limit
+    params["offset"] = (page - 1) * limit
 
     leads = db.raw_select("leads", params)
-    return {"data": leads, "page": page, "per_page": per_page, "count": len(leads)}
+
+    # Map score_ia → score for frontend
+    for lead in leads:
+        if "score_ia" in lead:
+            lead["score"] = lead["score_ia"]
+
+    pages = max(1, math.ceil(total / limit))
+    return {"items": leads, "total": total, "page": page, "pages": pages}
 
 
 @router.get("/stats")
 def get_leads_stats():
-    all_leads = db.select("leads", limit=10000)
+    all_leads = db.select_all("leads", select_cols="estado,provincia,email")
 
     by_estado: dict = {}
     by_provincia: dict = {}
-    by_rubro: dict = {}
-    score_dist = {"0-3": 0, "4-6": 0, "7-8": 0, "9-10": 0}
+    con_email = 0
 
     for lead in all_leads:
-        estado = lead.get("estado") or "sin_estado"
+        estado = lead.get("estado") or "nuevo"
         by_estado[estado] = by_estado.get(estado, 0) + 1
 
-        prov = lead.get("provincia") or "desconocida"
+        prov = lead.get("provincia") or "Desconocida"
         by_provincia[prov] = by_provincia.get(prov, 0) + 1
 
-        rubro = lead.get("rubro") or "sin_rubro"
-        by_rubro[rubro] = by_rubro.get(rubro, 0) + 1
+        if lead.get("email"):
+            con_email += 1
 
-        score = lead.get("score_ia")
-        try:
-            score = float(score) if score is not None else 0
-        except (ValueError, TypeError):
-            score = 0
-
-        if score <= 3:
-            score_dist["0-3"] += 1
-        elif score <= 6:
-            score_dist["4-6"] += 1
-        elif score <= 8:
-            score_dist["7-8"] += 1
-        else:
-            score_dist["9-10"] += 1
+    por_provincia = sorted(
+        [{"provincia": k, "count": v} for k, v in by_provincia.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )
+    por_estado = [{"estado": k, "count": v} for k, v in by_estado.items()]
 
     return {
         "total": len(all_leads),
-        "by_estado": by_estado,
-        "by_provincia": by_provincia,
-        "by_rubro": by_rubro,
-        "score_distribution": score_dist,
+        "con_email": con_email,
+        "por_provincia": por_provincia,
+        "por_estado": por_estado,
     }
 
 
 @router.get("/export")
 def export_leads_csv(
+    empresa: Optional[str] = None,
     rubro: Optional[str] = None,
     provincia: Optional[str] = None,
     estado: Optional[str] = None,
+    con_email: Optional[bool] = None,
+    con_telefono: Optional[bool] = None,
 ):
-    params = {"select": "*", "order": "created_at.desc", "limit": 10000}
-
-    if rubro:
-        params["rubro"] = f"ilike.%{rubro}%"
-    if provincia:
-        params["provincia"] = f"ilike.%{provincia}%"
-    if estado:
-        params["estado"] = f"eq.{estado}"
+    params = _build_filters(empresa, rubro, provincia, ciudad=None, estado=estado,
+                            con_email=con_email, con_telefono=con_telefono,
+                            score_min=None, score_max=None)
+    params["limit"] = 10000
 
     leads = db.raw_select("leads", params)
 
     fieldnames = [
-        "id", "empresa", "rubro", "direccion", "ciudad", "provincia",
+        "empresa", "rubro", "direccion", "ciudad", "provincia",
         "telefono", "website", "google_maps_url", "rating", "reviews_count",
-        "price_level", "horarios", "instagram", "email", "whatsapp",
-        "score_ia", "observaciones", "fuente", "fecha_extraccion",
-        "estado", "asignado_a", "ultima_actividad", "created_at",
+        "instagram", "email", "whatsapp", "score_ia", "observaciones",
+        "fuente", "fecha_extraccion", "estado",
     ]
 
     output = io.StringIO()
@@ -148,7 +149,6 @@ def export_leads_csv(
 
     output.seek(0)
     filename = f"leads_kairos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
@@ -161,20 +161,23 @@ def get_lead(lead_id: str):
     leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
     if not leads:
         raise HTTPException(status_code=404, detail="Lead not found")
-
     lead = leads[0]
-
-    activities = db.select(
-        "activities",
-        filters={"lead_id": f"eq.{lead_id}"},
-        order="created_at.desc",
-        limit=50,
-    )
-
-    lead["activities"] = activities
+    if "score_ia" in lead:
+        lead["score"] = lead["score_ia"]
+    try:
+        activities = db.select(
+            "activities",
+            filters={"lead_id": f"eq.{lead_id}"},
+            order="created_at.desc",
+            limit=50,
+        )
+        lead["activities"] = activities
+    except Exception:
+        lead["activities"] = []
     return lead
 
 
+@router.patch("/{lead_id}")
 @router.put("/{lead_id}")
 def update_lead(lead_id: str, body: LeadUpdate):
     leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)

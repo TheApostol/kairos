@@ -8,8 +8,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.backend.services.supabase_client import db
-from app.backend.config import settings
+from services.supabase_client import db
+from config import settings
 
 router = APIRouter(prefix="/scraper", tags=["scraper"])
 

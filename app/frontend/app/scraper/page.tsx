@@ -339,14 +339,15 @@ export default function ScraperPage() {
               <p className="text-sm">Sin historial de ejecuciones</p>
             </div>
           ) : (
-            <Table>
+            <div className="overflow-x-auto">
+            <Table className="min-w-[560px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Inicio</TableHead>
                   <TableHead>Fin</TableHead>
                   <TableHead>Estado</TableHead>
-                  <TableHead>Total Encontrados</TableHead>
-                  <TableHead>Nuevos Agregados</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Nuevos</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -367,6 +368,7 @@ export default function ScraperPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
