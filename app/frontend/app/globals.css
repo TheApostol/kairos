@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Kairos brand palette */
+    --background: 40 50% 97%;          /* #FAF7F2 warm cream */
+    --foreground: 24 28% 22%;          /* #4A3728 dark brown */
+    --card: 0 0% 100%;                 /* #FFFFFF */
+    --card-foreground: 24 28% 22%;     /* #4A3728 */
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 28% 22%;
+    --primary: 43 52% 51%;             /* #C9A040 gold */
+    --primary-foreground: 20 30% 13%;  /* #2C1F16 dark brown */
+    --secondary: 40 50% 94%;           /* warm cream tint */
+    --secondary-foreground: 24 28% 22%;
+    --muted: 40 30% 92%;
+    --muted-foreground: 22 25% 46%;    /* #6B4F3A medium brown */
+    --accent: 43 52% 51%;              /* #C9A040 gold */
+    --accent-foreground: 20 30% 13%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 35 25% 85%;
+    --input: 35 25% 85%;
+    --ring: 43 52% 51%;                /* gold focus ring */
+    --radius: 0.5rem;
+
+    /* Sidebar tokens */
+    --sidebar-bg: #2C1F16;
+    --sidebar-hover: #3D2B1F;
+    --sidebar-active: #C9A040;
+    --sidebar-text: #FAF7F2;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    color: #6B4F3A;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    color: #4A3728;
+  }
+  a {
+    color: #C9A040;
+  }
+  a:hover {
+    color: #a8832e;
+  }
+}
