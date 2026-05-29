@@ -156,6 +156,13 @@ def export_leads_csv(
     )
 
 
+@router.get("/rubros")
+def get_rubros():
+    leads = db.select_all("leads", select_cols="rubro")
+    rubros = sorted({l.get("rubro") for l in leads if l.get("rubro")})
+    return {"rubros": rubros}
+
+
 @router.get("/{lead_id}")
 def get_lead(lead_id: str):
     leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)

@@ -1,7 +1,7 @@
 import io
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -382,6 +382,38 @@ def delete_product(product_id: str):
         "updated_at": datetime.utcnow().isoformat(),
     })
     return {"message": "Product deactivated", "id": product_id}
+
+
+@router.get("/export-catalog")
+def export_catalog_get(
+    title: str = Query(default="Catálogo de Productos"),
+    product_ids: Optional[List[str]] = Query(default=None),
+    incluir_precios: bool = Query(default=True),
+):
+    if product_ids:
+        ids_str = ",".join(product_ids)
+        products = db.raw_select("products", {
+            "select": "*",
+            "id": f"in.({ids_str})",
+            "activo": "eq.true",
+        })
+    else:
+        products = db.select(
+            "products",
+            filters={"activo": "eq.true"},
+            order="orden.asc.nullslast,nombre.asc",
+        )
+
+    if not products:
+        raise HTTPException(status_code=404, detail="No products found")
+
+    pdf_bytes = _build_pdf_catalog(products, title, incluir_precios)
+    filename = f"catalogo_kairos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.post("/export-catalog")

@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { getLeads, getLeadStats, getApiUrl } from '@/lib/api'
+import { getLeads, getLeadStats, getLeadRubros, getApiUrl, updateLead } from '@/lib/api'
 import { Search, Download, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 
 interface Lead {
@@ -81,6 +81,7 @@ export default function LeadsPage() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [provincias, setProvincias] = useState<string[]>([])
+  const [rubros, setRubros] = useState<string[]>([])
 
   // Filters
   const [search, setSearch] = useState('')
@@ -123,6 +124,7 @@ export default function LeadsPage() {
     getLeadStats().then((s) => {
       setProvincias((s.por_provincia ?? []).map((p: { provincia: string }) => p.provincia))
     }).catch(() => {})
+    getLeadRubros().then((r) => setRubros(r.rubros ?? [])).catch(() => {})
   }, [])
 
   // Reset page on filter change
@@ -187,7 +189,9 @@ export default function LeadsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los rubros</SelectItem>
-                <SelectItem value="Tienda Holística / Sahumerios">Tienda Holística / Sahumerios</SelectItem>
+                {rubros.map((r) => (
+                  <SelectItem key={r} value={r}>{r}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
 
@@ -263,7 +267,26 @@ export default function LeadsPage() {
                       ) : '—'}
                     </TableCell>
                     <TableCell><ScoreBadge score={lead.score} /></TableCell>
-                    <TableCell><EstadoBadge estado={lead.estado} /></TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={lead.estado ?? 'nuevo'}
+                        onValueChange={async (newEstado) => {
+                          await updateLead(lead.id, { estado: newEstado })
+                          setLeads((prev) => prev.map((l) => l.id === lead.id ? { ...l, estado: newEstado } : l))
+                        }}
+                      >
+                        <SelectTrigger className="h-7 text-xs w-32 border-0 shadow-none p-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="nuevo">Nuevo</SelectItem>
+                          <SelectItem value="contactado">Contactado</SelectItem>
+                          <SelectItem value="interesado">Interesado</SelectItem>
+                          <SelectItem value="cliente">Cliente</SelectItem>
+                          <SelectItem value="descartado">Descartado</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
                     <TableCell className="text-slate-600 capitalize">{lead.rubro || '—'}</TableCell>
                     <TableCell>
                       <Button

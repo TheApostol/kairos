@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { getOrder, updateOrder, getProducts } from '@/lib/api'
+import { getOrder, updateOrder, getProducts, getOrderInvoiceUrl } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ArrowLeft, Loader2, Trash2, Plus } from 'lucide-react'
+import { ArrowLeft, Loader2, Trash2, Plus, FileDown } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -45,6 +45,7 @@ interface Order {
   empresa?: string
   notas?: string
   descuento?: number
+  fecha_entrega?: string
   created_at?: string
   updated_at?: string
   items?: OrderItem[]
@@ -91,6 +92,7 @@ export default function OrderDetailPage() {
   const [estado, setEstado] = useState('')
   const [notas, setNotas] = useState('')
   const [descuento, setDescuento] = useState(0)
+  const [fechaEntrega, setFechaEntrega] = useState('')
   const [hasChanges, setHasChanges] = useState(false)
 
   useEffect(() => {
@@ -101,6 +103,7 @@ export default function OrderDetailPage() {
         setEstado(o.estado)
         setNotas(o.notas ?? '')
         setDescuento(o.descuento ?? 0)
+        setFechaEntrega(o.fecha_entrega ?? '')
         setProducts(p.items ?? p ?? [])
       })
       .catch(() => {})
@@ -117,6 +120,7 @@ export default function OrderDetailPage() {
         estado,
         notas,
         descuento,
+        fecha_entrega: fechaEntrega || null,
         items: items.map((i) => ({
           product_id: i.product_id,
           cantidad: i.cantidad,
@@ -199,10 +203,20 @@ export default function OrderDetailPage() {
           </div>
           <p className="text-slate-500 mt-1">{order.empresa || `Lead #${order.lead_id}`}</p>
         </div>
-        <Button onClick={handleSave} disabled={!hasChanges || saving}>
-          {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-          Guardar
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => window.open(getOrderInvoiceUrl(id), '_blank')}
+            className="gap-2"
+          >
+            <FileDown className="w-4 h-4" />
+            Factura PDF
+          </Button>
+          <Button onClick={handleSave} disabled={!hasChanges || saving}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            Guardar
+          </Button>
+        </div>
       </div>
 
       {/* Order Header Info */}
@@ -226,9 +240,13 @@ export default function OrderDetailPage() {
               <Label className="text-slate-500">Creado</Label>
               <p className="text-sm mt-1">{formatDate(order.created_at)}</p>
             </div>
-            <div>
-              <Label className="text-slate-500">Actualizado</Label>
-              <p className="text-sm mt-1">{formatDate(order.updated_at)}</p>
+            <div className="space-y-1.5">
+              <Label>Fecha de Entrega</Label>
+              <Input
+                type="date"
+                value={fechaEntrega}
+                onChange={(e) => { setFechaEntrega(e.target.value); setHasChanges(true) }}
+              />
             </div>
           </div>
         </CardContent>

@@ -46,6 +46,10 @@ export async function getLeadStats() {
   return apiFetch('/leads/stats')
 }
 
+export async function getLeadRubros() {
+  return apiFetch('/leads/rubros')
+}
+
 // Campaigns
 export async function getCampaigns() {
   return apiFetch('/campaigns')
@@ -109,6 +113,10 @@ export async function updateOrder(id: string | number, data: Record<string, unkn
 
 export async function getOrderStats() {
   return apiFetch('/orders/stats')
+}
+
+export function getOrderInvoiceUrl(id: string | number) {
+  return getApiUrl(`/orders/${id}/invoice`)
 }
 
 // Products / Catalog

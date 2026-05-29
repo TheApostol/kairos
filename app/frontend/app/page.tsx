@@ -31,6 +31,7 @@ interface OrderStats {
   ordenes_activas: number
   revenue_mes: number
   por_mes: Array<{ mes: string; count: number }>
+  revenue_por_mes?: Array<{ mes: string; revenue: number }>
 }
 
 const ESTADO_COLORS: Record<string, string> = {
@@ -85,6 +86,10 @@ export default function DashboardPage() {
     )
   }
 
+  const totalLeads = leadStats?.total ?? 0
+  const clientesCount = (leadStats?.por_estado ?? []).find((e) => e.estado === 'cliente')?.count ?? 0
+  const conversionRate = totalLeads > 0 ? ((clientesCount / totalLeads) * 100).toFixed(1) : '0'
+
   const statCards = [
     {
       title: 'Total Leads',
@@ -114,6 +119,13 @@ export default function DashboardPage() {
       iconColor: '#4A3728',
       iconBg: 'rgba(74,55,40,0.1)',
     },
+    {
+      title: 'Tasa de Conversión',
+      value: leadStats ? `${conversionRate}%` : '—',
+      icon: TrendingUp,
+      iconColor: '#22c55e',
+      iconBg: '#f0fdf4',
+    },
   ]
 
   const provinciaData = (leadStats?.por_provincia ?? [])
@@ -128,7 +140,12 @@ export default function DashboardPage() {
 
   const mesesData = (orderStats?.por_mes ?? []).map((d) => ({
     name: d.mes,
-    campañas: d.count,
+    ordenes: d.count,
+  }))
+
+  const revenueData = (orderStats?.revenue_por_mes ?? []).map((d) => ({
+    name: d.mes,
+    revenue: d.revenue,
   }))
 
   return (
@@ -139,7 +156,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {statCards.map(({ title, value, icon: Icon, iconColor, iconBg }) => (
           <Card key={title}>
             <CardContent className="pt-6">
@@ -223,34 +240,58 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Line Chart: Campañas por Mes */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-semibold" style={{ color: '#4A3728' }}>Actividad por Mes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {mesesData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={mesesData} margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0ebe3" />
-                <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#6B4F3A' }} />
-                <YAxis tick={{ fontSize: 12, fill: '#6B4F3A' }} />
-                <Tooltip />
-                <Line
-                  type="monotone"
-                  dataKey="campañas"
-                  stroke="#C9A040"
-                  strokeWidth={2}
-                  dot={{ fill: '#C9A040', r: 4 }}
-                  activeDot={{ r: 6 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-48 flex items-center justify-center" style={{ color: '#6B4F3A' }}>Sin datos de meses</div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Charts Row 2: Activity + Revenue */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold" style={{ color: '#4A3728' }}>Órdenes por Mes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {mesesData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={mesesData} margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0ebe3" />
+                  <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#6B4F3A' }} />
+                  <YAxis tick={{ fontSize: 12, fill: '#6B4F3A' }} />
+                  <Tooltip />
+                  <Line
+                    type="monotone"
+                    dataKey="ordenes"
+                    name="Órdenes"
+                    stroke="#C9A040"
+                    strokeWidth={2}
+                    dot={{ fill: '#C9A040', r: 4 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-48 flex items-center justify-center" style={{ color: '#6B4F3A' }}>Sin datos</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold" style={{ color: '#4A3728' }}>Revenue por Mes (ARS)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {revenueData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={revenueData} margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0ebe3" />
+                  <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#6B4F3A' }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#6B4F3A' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Bar dataKey="revenue" name="Revenue" fill="#4A3728" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-48 flex items-center justify-center" style={{ color: '#6B4F3A' }}>Sin datos</div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

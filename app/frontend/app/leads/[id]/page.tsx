@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
+import { Progress } from '@/components/ui/progress'
 import {
   Select,
   SelectContent,
@@ -295,6 +296,18 @@ export default function LeadDetailPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {lead.score !== undefined && lead.score !== null && (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-sm">
+                    <Label>Score IA</Label>
+                    <span className={`font-bold ${lead.score >= 7 ? 'text-green-700' : lead.score >= 4 ? 'text-amber-600' : 'text-red-600'}`}>
+                      {lead.score}/10
+                    </span>
+                  </div>
+                  <Progress value={lead.score * 10} className="h-2" />
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <Label>Observaciones</Label>
