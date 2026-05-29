@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kairos CRM — Mock</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #FAF7F2; color: #4A3728; display: flex; height: 100vh; overflow: hidden; }
+
+  /* SIDEBAR */
+  .sidebar { width: 220px; min-width: 220px; background: #2C1F16; display: flex; flex-direction: column; height: 100vh; }
+  .logo-area { padding: 18px 16px; border-bottom: 1px solid #3D2B1F; display: flex; align-items: center; gap: 10px; }
+  .logo-eye { width: 36px; height: 36px; flex-shrink: 0; }
+  .logo-text { display: flex; flex-direction: column; }
+  .logo-name { color: #FAF7F2; font-size: 13px; font-weight: 700; letter-spacing: 2.5px; font-family: Georgia, serif; }
+  .logo-sub  { color: #C9A040; font-size: 8px; letter-spacing: 2px; font-family: Georgia, serif; margin-top: 1px; }
+
+  nav { flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; cursor: pointer; transition: background .15s; color: #D4C5B8; font-size: 13px; font-weight: 500; position: relative; }
+  .nav-item:hover { background: #3D2B1F; }
+  .nav-item.active { background: #C9A040; color: #2C1F16; font-weight: 700; }
+  .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .nav-badge { margin-left: auto; background: #C9A040; color: #2C1F16; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px; }
+  .nav-item.active .nav-badge { background: #2C1F16; color: #C9A040; }
+
+  .sidebar-footer { padding: 12px 16px; border-top: 1px solid #3D2B1F; }
+  .sidebar-footer p { color: #6B4F3A; font-size: 10px; }
+
+  /* MAIN */
+  .main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+
+  /* TOP BAR */
+  .topbar { background: #fff; border-bottom: 1px solid #E8DDD4; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .topbar h1 { font-size: 17px; font-weight: 700; color: #4A3728; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .btn { padding: 7px 16px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; }
+  .btn-gold { background: #C9A040; color: #2C1F16; }
+  .btn-outline { background: transparent; border: 1.5px solid #C9A040; color: #C9A040; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: #C9A040; color: #2C1F16; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+
+  /* CONTENT */
+  .content { padding: 24px 28px; flex: 1; }
+
+  /* TABS */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; background: #F0EAE4; padding: 4px; border-radius: 9px; width: fit-content; }
+  .tab { padding: 6px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; color: #6B4F3A; }
+  .tab.active { background: #fff; color: #4A3728; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+
+  /* STAT CARDS */
+  .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 22px; }
+  .stat-card { background: #fff; border-radius: 12px; padding: 18px 20px; border: 1px solid #EDE5DC; }
+  .stat-label { font-size: 11px; color: #9B8070; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .stat-label svg { width: 13px; height: 13px; color: #C9A040; }
+  .stat-value { font-size: 28px; font-weight: 800; color: #4A3728; line-height: 1; }
+  .stat-sub { font-size: 11px; color: #9B8070; margin-top: 4px; }
+  .stat-up { color: #22C55E; font-weight: 600; }
+
+  /* CHARTS ROW */
+  .charts-row { display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; margin-bottom: 22px; }
+  .chart-card { background: #fff; border-radius: 12px; padding: 18px 20px; border: 1px solid #EDE5DC; }
+  .chart-title { font-size: 13px; font-weight: 700; color: #4A3728; margin-bottom: 14px; }
+  .bar-chart { display: flex; align-items: flex-end; gap: 6px; height: 110px; }
+  .bar-group { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+  .bar { background: #C9A040; border-radius: 4px 4px 0 0; width: 100%; transition: opacity .2s; }
+  .bar:hover { opacity: .8; }
+  .bar-label { font-size: 9px; color: #9B8070; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40px; }
+  .donut-wrap { display: flex; align-items: center; gap: 16px; }
+  .donut { position: relative; width: 90px; height: 90px; flex-shrink: 0; }
+  .donut svg { width: 90px; height: 90px; transform: rotate(-90deg); }
+  .donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .donut-center span:first-child { font-size: 20px; font-weight: 800; color: #4A3728; line-height: 1; }
+  .donut-center span:last-child { font-size: 8px; color: #9B8070; }
+  .legend { display: flex; flex-direction: column; gap: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #6B4F3A; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  /* LEADS TABLE */
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .section-title { font-size: 14px; font-weight: 700; color: #4A3728; }
+  .filters-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-input { padding: 7px 12px; border: 1.5px solid #E0D5CA; border-radius: 7px; font-size: 12px; color: #4A3728; background: #fff; outline: none; }
+  .filter-input:focus { border-color: #C9A040; }
+  .filter-select { padding: 7px 12px; border: 1.5px solid #E0D5CA; border-radius: 7px; font-size: 12px; color: #4A3728; background: #fff; outline: none; cursor: pointer; }
+  .toggle-pill { padding: 7px 12px; border: 1.5px solid #E0D5CA; border-radius: 7px; font-size: 12px; color: #9B8070; background: #fff; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+  .toggle-pill.on { border-color: #C9A040; color: #C9A040; background: #FFF8EC; }
+
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid #EDE5DC; font-size: 12px; }
+  thead { background: #F7F1EA; }
+  th { padding: 10px 14px; text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #9B8070; border-bottom: 1px solid #EDE5DC; }
+  td { padding: 10px 14px; border-bottom: 1px solid #F5EFE9; color: #4A3728; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #FBF8F4; cursor: pointer; }
+
+  .score { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; font-size: 12px; font-weight: 800; }
+  .score-high { background: #DCFCE7; color: #166534; }
+  .score-mid  { background: #FEF9C3; color: #854D0E; }
+  .score-low  { background: #FEE2E2; color: #991B1B; }
+
+  .estado-badge { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 99px; font-size: 10px; font-weight: 600; }
+  .estado-nuevo       { background: #DBEAFE; color: #1E40AF; }
+  .estado-contactado  { background: #FEF9C3; color: #854D0E; }
+  .estado-interesado  { background: #FFEDD5; color: #9A3412; }
+  .estado-cliente     { background: #DCFCE7; color: #166534; }
+
+  .check { color: #22C55E; font-size: 14px; }
+  .dash  { color: #D1C5BA; font-size: 14px; }
+
+  /* PAGINATION */
+  .pagination { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; font-size: 12px; color: #9B8070; }
+  .page-btns { display: flex; gap: 4px; }
+  .page-btn { width: 28px; height: 28px; border-radius: 6px; border: 1.5px solid #E0D5CA; background: #fff; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #4A3728; }
+  .page-btn.active { background: #C9A040; border-color: #C9A040; color: #2C1F16; font-weight: 700; }
+
+  /* CAMPAIGN PREVIEW */
+  .campaign-preview { display: none; }
+  .campaign-preview.show { display: block; }
+
+  /* VIEW SWITCHER */
+  .view-btn { padding: 6px 14px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: all .15s; }
+  .view-btn.active-view { background: #4A3728; color: #FAF7F2; }
+  .view-btn.inactive-view { background: #F0EAE4; color: #6B4F3A; }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="logo-area">
+    <svg class="logo-eye" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(30,28)">
+        <g stroke="#C9A040" stroke-width="2" stroke-linecap="round">
+          <line x1="0" y1="-20" x2="0" y2="-13"/>
+          <line x1="14.1" y1="-14.1" x2="9.5" y2="-9.5"/>
+          <line x1="20" y1="0" x2="13" y2="0"/>
+          <line x1="14.1" y1="14.1" x2="9.5" y2="9.5"/>
+          <line x1="0" y1="20" x2="0" y2="13"/>
+          <line x1="-14.1" y1="14.1" x2="-9.5" y2="9.5"/>
+          <line x1="-20" y1="0" x2="-13" y2="0"/>
+          <line x1="-14.1" y1="-14.1" x2="-9.5" y2="-9.5"/>
+        </g>
+        <path d="M-12,0 Q0,-9 12,0 Q0,9 -12,0 Z" fill="none" stroke="#C9A040" stroke-width="2"/>
+        <circle cx="0" cy="0" r="4.5" fill="#C9A040"/>
+        <circle cx="0" cy="0" r="2" fill="#2C1F16"/>
+        <circle cx="1.5" cy="-1.5" r="0.8" fill="#FAF7F2"/>
+      </g>
+    </svg>
+    <div class="logo-text">
+      <span class="logo-name">KAIROS</span>
+      <span class="logo-sub">DISTRIBUIDORA</span>
+    </div>
+  </div>
+
+  <nav>
+    <div class="nav-item active" onclick="showView('dashboard')">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Dashboard
+    </div>
+    <div class="nav-item" onclick="showView('leads')">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Leads
+      <span class="nav-badge">3.521</span>
+    </div>
+    <div class="nav-item" onclick="showView('campaigns')">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      Campañas
+    </div>
+    <div class="nav-item" onclick="showView('orders')">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+      Órdenes
+    </div>
+    <div class="nav-item" onclick="showView('catalog')">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      Catálogo
+    </div>
+    <div class="nav-item" onclick="showView('scraper')">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Scraper
+    </div>
+  </nav>
+
+  <div class="sidebar-footer"><p>kairos.polkorp.com</p></div>
+</aside>
+
+<!-- MAIN CONTENT -->
+<div class="main">
+
+  <!-- ═══════════════════════════ DASHBOARD ═══════════════════════════ -->
+  <div id="view-dashboard">
+    <div class="topbar">
+      <h1>Dashboard</h1>
+      <div class="topbar-right">
+        <span style="font-size:12px;color:#9B8070;">Mayo 2026</span>
+        <button class="btn btn-gold">+ Nueva Campaña</button>
+        <div class="avatar">K</div>
+      </div>
+    </div>
+    <div class="content">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">
+            <svg fill="none" stroke="#C9A040" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            Total Leads
+          </div>
+          <div class="stat-value">3.521</div>
+          <div class="stat-sub"><span class="stat-up">↑ +2.012</span> esta semana</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">
+            <svg fill="none" stroke="#C9A040" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.15 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.06 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 9.4a16 16 0 0 0 6.69 6.69l.83-.83a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 17.92z"/></svg>
+            Con Teléfono
+          </div>
+          <div class="stat-value">3.017</div>
+          <div class="stat-sub">86% del total</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">
+            <svg fill="none" stroke="#C9A040" stroke-width="2" viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+            Órdenes Activas
+          </div>
+          <div class="stat-value">0</div>
+          <div class="stat-sub">Cargá tu primer pedido</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">
+            <svg fill="none" stroke="#C9A040" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            Score IA ≥ 7
+          </div>
+          <div class="stat-value">1.648</div>
+          <div class="stat-sub">47% son leads calificados</div>
+        </div>
+      </div>
+
+      <div class="charts-row">
+        <!-- BAR CHART -->
+        <div class="chart-card">
+          <div class="chart-title">Leads por provincia (top 8)</div>
+          <div class="bar-chart">
+            <div class="bar-group"><div class="bar" style="height:100%"></div><div class="bar-label">CABA</div></div>
+            <div class="bar-group"><div class="bar" style="height:78%;background:#D4B870"></div><div class="bar-label">Bs.As.</div></div>
+            <div class="bar-group"><div class="bar" style="height:21%;background:#D4B870"></div><div class="bar-label">Sta.Fe</div></div>
+            <div class="bar-group"><div class="bar" style="height:17%;background:#D4B870"></div><div class="bar-label">Entre R.</div></div>
+            <div class="bar-group"><div class="bar" style="height:16%;background:#D4B870"></div><div class="bar-label">Córdoba</div></div>
+            <div class="bar-group"><div class="bar" style="height:14%;background:#D4B870"></div><div class="bar-label">Salta</div></div>
+            <div class="bar-group"><div class="bar" style="height:13%;background:#D4B870"></div><div class="bar-label">Mendoza</div></div>
+            <div class="bar-group"><div class="bar" style="height:11%;background:#D4B870"></div><div class="bar-label">Tucumán</div></div>
+          </div>
+        </div>
+
+        <!-- DONUT -->
+        <div class="chart-card">
+          <div class="chart-title">Estado de leads</div>
+          <div class="donut-wrap">
+            <div class="donut">
+              <svg viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#EDE5DC" stroke-width="3"/>
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#3B82F6" stroke-width="3" stroke-dasharray="70 30" stroke-dashoffset="0"/>
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#F59E0B" stroke-width="3" stroke-dasharray="15 85" stroke-dashoffset="-70"/>
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#F97316" stroke-width="3" stroke-dasharray="10 90" stroke-dashoffset="-85"/>
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#22C55E" stroke-width="3" stroke-dasharray="5 95" stroke-dashoffset="-95"/>
+              </svg>
+              <div class="donut-center"><span>3.521</span><span>leads</span></div>
+            </div>
+            <div class="legend">
+              <div class="legend-item"><div class="legend-dot" style="background:#3B82F6"></div>Nuevos (70%)</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#F59E0B"></div>Contactados (15%)</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#F97316"></div>Interesados (10%)</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#22C55E"></div>Clientes (5%)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RECENT LEADS TABLE -->
+      <div class="section-header">
+        <span class="section-title">Leads recientes — Score alto</span>
+        <button class="btn btn-outline" onclick="showView('leads')">Ver todos →</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Empresa</th><th>Ciudad</th><th>Teléfono</th><th>Email</th><th>Score</th><th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><b>Vishnu - Mayorista Sahumerios</b></td><td>Córdoba</td><td>0351 768-6008</td><td>✉ info@vishnu.com.ar</td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+          <tr><td><b>SAHUFAL</b></td><td>San Juan</td><td>0264 480-3959</td><td>✉ admin@sahufal.com.ar</td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+          <tr><td><b>Sagrada Madre Argentina</b></td><td>Ciudadela</td><td>011 6250-1279</td><td>✉ info@sagradamadre.com</td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-contactado">Contactado</span></td></tr>
+          <tr><td><b>Distribuidora Melisa</b></td><td>Haedo</td><td>011 6255-5498</td><td>✉ info@distribuidoramelisa.com</td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-interesado">Interesado</span></td></tr>
+          <tr><td><b>AMOTERRA®</b></td><td>Lomas del Mirador</td><td>011 7602-4736</td><td>✉ info@amoterra.com.ar</td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-cliente">Cliente</span></td></tr>
+          <tr><td><b>Tienda De Feng Shui</b></td><td>Buenos Aires</td><td>011 5151-1188</td><td>— </td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ LEADS ═══════════════════════════ -->
+  <div id="view-leads" style="display:none;">
+    <div class="topbar">
+      <h1>Leads <span style="font-size:13px;font-weight:400;color:#9B8070;margin-left:6px;">3.521 registros</span></h1>
+      <div class="topbar-right">
+        <button class="btn btn-outline">⬇ Exportar CSV</button>
+        <button class="btn btn-gold">+ Enriquecer</button>
+        <div class="avatar">K</div>
+      </div>
+    </div>
+    <div class="content">
+      <div class="filters-bar">
+        <input class="filter-input" placeholder="🔍  Buscar empresa..." style="width:200px;">
+        <select class="filter-select"><option>Todas las provincias</option><option>CABA</option><option>Pcia. Bs.As.</option><option>Santa Fe</option><option>Córdoba</option></select>
+        <select class="filter-select"><option>Todos los rubros</option><option>Tienda Holística</option><option>Herboristería</option><option>Yoga</option><option>Cristales</option></select>
+        <select class="filter-select"><option>Todos los estados</option><option>Nuevo</option><option>Contactado</option><option>Interesado</option><option>Cliente</option></select>
+        <div class="toggle-pill on">✉ Con email</div>
+        <div class="toggle-pill">📞 Con tel.</div>
+        <div style="margin-left:auto;font-size:12px;color:#9B8070;display:flex;align-items:center;gap:6px;">
+          Score mín: <b style="color:#C9A040;">7</b>
+          <input type="range" min="1" max="10" value="7" style="width:80px;accent-color:#C9A040;">
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Empresa</th><th>Ciudad / Prov.</th><th>Rubro</th><th>Teléfono</th><th>Email</th><th>WhatsApp</th><th>Score</th><th>Estado</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>Vishnu - Mayorista</b></td><td>Córdoba / Córdoba</td><td>T. Holística</td><td>0351 768-6008</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+          <tr><td><b>SAHUFAL</b></td><td>San Juan / San Juan</td><td>T. Holística</td><td>0264 480-3959</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+          <tr><td><b>Sagrada Madre Arg.</b></td><td>Ciudadela / Bs.As.</td><td>T. Holística</td><td>011 6250-1279</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-contactado">Contactado</span></td></tr>
+          <tr><td><b>Distribuidora Melisa</b></td><td>Haedo / Bs.As.</td><td>Mayorista</td><td>011 6255-5498</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-interesado">Interesado</span></td></tr>
+          <tr><td><b>Santería M.C.</b></td><td>Rosario / Sta.Fe</td><td>Santería</td><td>0341 639-7716</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+          <tr><td><b>AMOTERRA®</b></td><td>L. del Mirador / Bs.As.</td><td>Cosmética Nat.</td><td>011 7602-4736</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-cliente">Cliente</span></td></tr>
+          <tr><td><b>Nakiki</b></td><td>Buenos Aires / CABA</td><td>T. Holística</td><td>011 7363-3972</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+          <tr><td><b>Padma Tienda Natural</b></td><td>Mar del Plata / Bs.As.</td><td>Naturismo</td><td>0223 422-1550</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+          <tr><td><b>Almacén de Aromas</b></td><td>Rosario / Sta.Fe</td><td>Aromaterapia</td><td>0341 211-9218</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-nuevo">Nuevo</span></td></tr>
+          <tr><td><b>Chakra Profesional</b></td><td>Moreno / Bs.As.</td><td>T. Holística</td><td>011 2544-1220</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="score score-high">8</span></td><td><span class="estado-badge estado-contactado">Contactado</span></td></tr>
+        </tbody>
+      </table>
+      <div class="pagination">
+        <span>Mostrando 1–10 de 1.648 leads con score ≥7</span>
+        <div class="page-btns">
+          <div class="page-btn">‹</div>
+          <div class="page-btn active">1</div>
+          <div class="page-btn">2</div>
+          <div class="page-btn">3</div>
+          <div class="page-btn">…</div>
+          <div class="page-btn">33</div>
+          <div class="page-btn">›</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ CAMPAIGNS ═══════════════════════════ -->
+  <div id="view-campaigns" style="display:none;">
+    <div class="topbar">
+      <h1>Campañas</h1>
+      <div class="topbar-right">
+        <button class="btn btn-gold">+ Nueva Campaña</button>
+        <div class="avatar">K</div>
+      </div>
+    </div>
+    <div class="content">
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);">
+        <div class="stat-card"><div class="stat-label">Total enviados</div><div class="stat-value">0</div><div class="stat-sub">Primera campaña pendiente</div></div>
+        <div class="stat-card"><div class="stat-label">Tasa apertura</div><div class="stat-value">—</div><div class="stat-sub">Sin datos aún</div></div>
+        <div class="stat-card"><div class="stat-label">Clicks</div><div class="stat-value">—</div></div>
+        <div class="stat-card"><div class="stat-label">Conversiones</div><div class="stat-value">—</div></div>
+      </div>
+      <div style="background:#fff;border-radius:12px;border:1px solid #EDE5DC;padding:40px;text-align:center;margin-top:8px;">
+        <div style="font-size:40px;margin-bottom:12px;">✨</div>
+        <div style="font-size:16px;font-weight:700;color:#4A3728;margin-bottom:6px;">Generá tu primera campaña con IA</div>
+        <div style="font-size:13px;color:#9B8070;margin-bottom:18px;max-width:400px;margin-left:auto;margin-right:auto;">Seleccioná un segmento de leads, elegí el tipo (email o WhatsApp) y dejá que Claude genere el texto personalizado por negocio.</div>
+        <button class="btn btn-gold" style="font-size:13px;padding:10px 24px;">🤖 Generar campaña con IA</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ ORDERS ═══════════════════════════ -->
+  <div id="view-orders" style="display:none;">
+    <div class="topbar">
+      <h1>Órdenes</h1>
+      <div class="topbar-right">
+        <button class="btn btn-gold">+ Nueva Orden</button>
+        <div class="avatar">K</div>
+      </div>
+    </div>
+    <div class="content">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;">
+        <div style="background:#F0EAE4;border-radius:12px;padding:14px;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#9B8070;margin-bottom:10px;">📝 Borrador <span style="float:right;background:#fff;padding:1px 7px;border-radius:99px;font-size:10px;">0</span></div>
+          <div style="border:2px dashed #D4C5B8;border-radius:8px;padding:20px;text-align:center;font-size:11px;color:#B8A898;cursor:pointer;">+ Crear orden</div>
+        </div>
+        <div style="background:#EFF6FF;border-radius:12px;padding:14px;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#3B82F6;margin-bottom:10px;">✅ Confirmado <span style="float:right;background:#fff;padding:1px 7px;border-radius:99px;font-size:10px;">0</span></div>
+        </div>
+        <div style="background:#FFF7ED;border-radius:12px;padding:14px;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#F97316;margin-bottom:10px;">📦 En preparación <span style="float:right;background:#fff;padding:1px 7px;border-radius:99px;font-size:10px;">0</span></div>
+        </div>
+        <div style="background:#F0FDF4;border-radius:12px;padding:14px;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#22C55E;margin-bottom:10px;">🚚 Despachado <span style="float:right;background:#fff;padding:1px 7px;border-radius:99px;font-size:10px;">0</span></div>
+        </div>
+        <div style="background:#F8F9FA;border-radius:12px;padding:14px;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#6B7280;margin-bottom:10px;">🎯 Entregado <span style="float:right;background:#fff;padding:1px 7px;border-radius:99px;font-size:10px;">0</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ CATALOG ═══════════════════════════ -->
+  <div id="view-catalog" style="display:none;">
+    <div class="topbar">
+      <h1>Catálogo de Productos</h1>
+      <div class="topbar-right">
+        <button class="btn btn-outline">⬇ Exportar PDF</button>
+        <button class="btn btn-gold">+ Agregar Producto</button>
+        <div class="avatar">K</div>
+      </div>
+    </div>
+    <div class="content">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+        <div style="background:#fff;border:2px dashed #D4C5B8;border-radius:12px;padding:32px;text-align:center;cursor:pointer;color:#9B8070;display:flex;flex-direction:column;align-items:center;gap:8px;">
+          <div style="font-size:32px;">+</div>
+          <div style="font-size:13px;font-weight:600;">Agregar producto</div>
+          <div style="font-size:11px;">Subí foto, precio mayorista y minorista</div>
+        </div>
+        <div style="background:#fff;border:1px solid #EDE5DC;border-radius:12px;overflow:hidden;opacity:.5;">
+          <div style="height:120px;background:linear-gradient(135deg,#FAF7F2,#EDE5DC);display:flex;align-items:center;justify-content:center;font-size:36px;">🕯️</div>
+          <div style="padding:14px;">
+            <div style="font-size:13px;font-weight:700;color:#4A3728;margin-bottom:4px;">Ejemplo: Vela de Soja</div>
+            <div style="font-size:11px;color:#9B8070;margin-bottom:8px;">Categoría: Velas</div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;">
+              <span>Minorista: <b style="color:#C9A040;">$2.500</b></span>
+              <span>Mayor: <b style="color:#4A3728;">$1.800</b></span>
+            </div>
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid #EDE5DC;border-radius:12px;overflow:hidden;opacity:.5;">
+          <div style="height:120px;background:linear-gradient(135deg,#FAF7F2,#EDE5DC);display:flex;align-items:center;justify-content:center;font-size:36px;">🌿</div>
+          <div style="padding:14px;">
+            <div style="font-size:13px;font-weight:700;color:#4A3728;margin-bottom:4px;">Ejemplo: Sahumerio Premium</div>
+            <div style="font-size:11px;color:#9B8070;margin-bottom:8px;">Categoría: Sahumerios</div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;">
+              <span>Minorista: <b style="color:#C9A040;">$1.200</b></span>
+              <span>Mayor: <b style="color:#4A3728;">$850</b></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ SCRAPER ═══════════════════════════ -->
+  <div id="view-scraper" style="display:none;">
+    <div class="topbar">
+      <h1>Scraper de Leads</h1>
+      <div class="topbar-right"><div class="avatar">K</div></div>
+    </div>
+    <div class="content">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+        <div style="background:#fff;border-radius:12px;border:1px solid #EDE5DC;padding:24px;text-align:center;">
+          <div style="font-size:13px;font-weight:700;color:#4A3728;margin-bottom:6px;">Ejecutar Scraper</div>
+          <div style="font-size:11px;color:#9B8070;margin-bottom:16px;">Busca nuevas tiendas en Google Places<br>y las agrega a la base automáticamente.</div>
+          <button class="btn btn-gold" style="font-size:14px;padding:12px 32px;width:100%;">▶ Ejecutar Ahora</button>
+          <div style="margin-top:14px;">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#9B8070;margin-bottom:4px;"><span>Progreso</span><span>0%</span></div>
+            <div style="height:8px;background:#F0EAE4;border-radius:99px;overflow:hidden;"><div style="height:100%;width:0%;background:#C9A040;border-radius:99px;transition:width .3s;"></div></div>
+          </div>
+        </div>
+        <div style="background:#fff;border-radius:12px;border:1px solid #EDE5DC;padding:24px;text-align:center;">
+          <div style="font-size:13px;font-weight:700;color:#4A3728;margin-bottom:6px;">Enriquecer Leads</div>
+          <div style="font-size:11px;color:#9B8070;margin-bottom:16px;">Scrapea los sitios web de cada lead<br>para encontrar email, Instagram y WhatsApp.</div>
+          <button class="btn btn-outline" style="font-size:14px;padding:12px 32px;width:100%;">✨ Enriquecer Base</button>
+        </div>
+      </div>
+      <div class="section-header"><span class="section-title">Historial de ejecuciones</span></div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Queries</th><th>Encontrados</th><th>Nuevos</th><th>Duración</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr><td>2026-05-29 09:34</td><td>195</td><td>2.012</td><td>2.012</td><td>~45 min</td><td><span class="estado-badge estado-cliente">✓ Completado</span></td></tr>
+          <tr><td>2026-05-29 08:59</td><td>80</td><td>1.530</td><td>1.530</td><td>~28 min</td><td><span class="estado-badge estado-cliente">✓ Completado</span></td></tr>
+          <tr><td>2026-05-29 08:32</td><td>20</td><td>532</td><td>532</td><td>~12 min</td><td><span class="estado-badge estado-cliente">✓ Completado</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function showView(name) {
+  ['dashboard','leads','campaigns','orders','catalog','scraper'].forEach(v => {
+    document.getElementById('view-'+v).style.display = v === name ? '' : 'none';
+  });
+  document.querySelectorAll('.nav-item').forEach((el, i) => {
+    const views = ['dashboard','leads','campaigns','orders','catalog','scraper'];
+    el.classList.toggle('active', views[i] === name);
+  });
+}
+</script>
+</body>
+</html>
