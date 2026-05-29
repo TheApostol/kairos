@@ -210,7 +210,7 @@ export default function LeadsPage() {
             </Select>
           </div>
 
-          <div className="flex items-center gap-6 mt-3">
+          <div className="flex flex-wrap items-center gap-4 mt-3">
             <div className="flex items-center gap-2">
               <Switch id="solo-email" checked={soloEmail} onCheckedChange={setSoloEmail} />
               <Label htmlFor="solo-email" className="text-sm cursor-pointer">Solo con email</Label>

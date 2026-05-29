@@ -121,7 +121,7 @@ export default function CampaignsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Campañas</h1>
           <p className="text-slate-500 mt-1">Gestión de campañas de email y WhatsApp</p>
@@ -167,51 +167,82 @@ export default function CampaignsPage() {
               </Button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-            <Table className="min-w-[680px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Enviados</TableHead>
-                  <TableHead>Abiertos %</TableHead>
-                  <TableHead>Clicks %</TableHead>
-                  <TableHead>Fecha</TableHead>
-                  <TableHead className="w-20">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Mobile: card list */}
+              <div className="sm:hidden divide-y">
                 {campaigns.map((c) => (
-                  <TableRow
+                  <div
                     key={c.id}
-                    className="cursor-pointer"
+                    className="flex items-start justify-between gap-3 px-4 py-3 cursor-pointer active:bg-slate-50"
                     onClick={() => router.push(`/campaigns/${c.id}`)}
                   >
-                    <TableCell className="font-medium text-slate-900">{c.nombre}</TableCell>
-                    <TableCell><TipoBadge tipo={c.tipo} /></TableCell>
-                    <TableCell><EstadoBadge estado={c.estado} /></TableCell>
-                    <TableCell>{c.enviados?.toLocaleString('es-AR') ?? '—'}</TableCell>
-                    <TableCell>{pct(c.abiertos, c.enviados)}</TableCell>
-                    <TableCell>{pct(c.clicks, c.enviados)}</TableCell>
-                    <TableCell className="text-slate-500">{formatDate(c.created_at)}</TableCell>
-                    <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          router.push(`/campaigns/${c.id}`)
-                        }}
-                      >
-                        Ver
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm truncate text-slate-900">{c.nombre}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{formatDate(c.created_at)}</p>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <TipoBadge tipo={c.tipo} />
+                        <EstadoBadge estado={c.estado} />
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0 text-right">
+                      {c.enviados ? (
+                        <p className="text-xs text-slate-500">{c.enviados.toLocaleString('es-AR')} env.</p>
+                      ) : null}
+                      {pct(c.abiertos, c.enviados) !== '—' && (
+                        <p className="text-xs text-emerald-700 font-medium">{pct(c.abiertos, c.enviados)} apert.</p>
+                      )}
+                    </div>
+                  </div>
                 ))}
-              </TableBody>
-            </Table>
-            </div>
+              </div>
+
+              {/* Desktop: full table */}
+              <div className="hidden sm:block overflow-x-auto">
+              <Table className="min-w-[680px]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nombre</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Estado</TableHead>
+                    <TableHead>Enviados</TableHead>
+                    <TableHead>Abiertos %</TableHead>
+                    <TableHead>Clicks %</TableHead>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead className="w-20">Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {campaigns.map((c) => (
+                    <TableRow
+                      key={c.id}
+                      className="cursor-pointer"
+                      onClick={() => router.push(`/campaigns/${c.id}`)}
+                    >
+                      <TableCell className="font-medium text-slate-900">{c.nombre}</TableCell>
+                      <TableCell><TipoBadge tipo={c.tipo} /></TableCell>
+                      <TableCell><EstadoBadge estado={c.estado} /></TableCell>
+                      <TableCell>{c.enviados?.toLocaleString('es-AR') ?? '—'}</TableCell>
+                      <TableCell>{pct(c.abiertos, c.enviados)}</TableCell>
+                      <TableCell>{pct(c.clicks, c.enviados)}</TableCell>
+                      <TableCell className="text-slate-500">{formatDate(c.created_at)}</TableCell>
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            router.push(`/campaigns/${c.id}`)
+                          }}
+                        >
+                          Ver
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
