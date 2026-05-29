@@ -1,0 +1,39 @@
+name: Build & Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/frontend/**'
+      - '.github/workflows/build-frontend.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app/frontend
+        run: npm install --legacy-peer-deps
+
+      - name: Build Next.js
+        working-directory: app/frontend
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://kairos-anuu.onrender.com
+
+      - name: Commit build artifacts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Add .next to git (force since it's gitignored)
+          git add -f app/frontend/.next
+          git diff --staged --quiet || git commit -m "chore: auto-build frontend [skip ci]"
+          git push
