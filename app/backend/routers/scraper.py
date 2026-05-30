@@ -633,10 +633,41 @@ def run_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
     return start_scraper(body, background_tasks)
 
 
+STUCK_JOB_TIMEOUT_MINUTES = 30
+
+
+def _auto_fail_stuck_jobs(jobs: list) -> list:
+    """Mark running/pending jobs older than STUCK_JOB_TIMEOUT_MINUTES as failed."""
+    now = datetime.now(timezone.utc)
+    for job in jobs:
+        if job.get("status") not in ("running", "pending"):
+            continue
+        started_raw = job.get("started_at") or job.get("created_at")
+        if not started_raw:
+            continue
+        try:
+            started = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            elapsed = (now - started).total_seconds() / 60
+            if elapsed > STUCK_JOB_TIMEOUT_MINUTES:
+                db.update("scraper_jobs", job["id"], {
+                    "status": "failed",
+                    "error_msg": f"Cancelado automáticamente (sin actividad por {int(elapsed)} min)",
+                    "completed_at": now.isoformat(),
+                })
+                job["status"] = "failed"
+                job["error_msg"] = f"Cancelado automáticamente (sin actividad por {int(elapsed)} min)"
+        except Exception:
+            pass
+    return jobs
+
+
 @router.get("/history")
 def get_history():
     """Frontend-compatible alias for /jobs with mapped field names."""
     jobs = db.select("scraper_jobs", order="created_at.desc", limit=20)
+    jobs = _auto_fail_stuck_jobs(jobs)
     status_map = {"completed": "completado", "failed": "error", "running": "corriendo", "pending": "pendiente"}
     items = [
         {
@@ -654,6 +685,23 @@ def get_history():
         for job in jobs
     ]
     return {"items": items}
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    """Force-cancel a running or pending job."""
+    jobs = db.select("scraper_jobs", filters={"id": f"eq.{job_id}"}, limit=1)
+    if not jobs:
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+    job = jobs[0]
+    if job.get("status") not in ("running", "pending"):
+        raise HTTPException(status_code=400, detail="El job ya terminó")
+    db.update("scraper_jobs", job_id, {
+        "status": "failed",
+        "error_msg": "Cancelado manualmente",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True}
 
 
 @router.get("/progress")

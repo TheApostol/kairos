@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { getScraperHistory, runScraper, runEnrichment, getApiUrl } from '@/lib/api'
+import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, getApiUrl } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react'
+import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -82,6 +82,18 @@ export default function ScraperPage() {
   const enrichIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [refreshing, setRefreshing] = useState(false)
+  const [cancellingId, setCancellingId] = useState<number | null>(null)
+
+  const cancelJob = async (jobId: number) => {
+    setCancellingId(jobId)
+    try {
+      await cancelScraperJob(jobId)
+      await fetchHistory()
+      setScraperState((prev) => prev === 'running' ? 'idle' : prev)
+      setEnrichState((prev) => prev === 'running' ? 'idle' : prev)
+    } catch {}
+    finally { setCancellingId(null) }
+  }
 
   const fetchHistory = async () => {
     setRefreshing(true)
@@ -455,6 +467,7 @@ export default function ScraperPage() {
                     <TableHead>Progreso</TableHead>
                     <TableHead>Total</TableHead>
                     <TableHead>Nuevos</TableHead>
+                    <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -483,6 +496,22 @@ export default function ScraperPage() {
                         {job.nuevos_agregados !== undefined ? (
                           <span className="text-emerald-700 font-semibold">+{job.nuevos_agregados.toLocaleString('es-AR')}</span>
                         ) : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {(job.estado === 'corriendo' || job.estado === 'pendiente') && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => cancelJob(job.id)}
+                            disabled={cancellingId === job.id}
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
+                            title="Cancelar job"
+                          >
+                            {cancellingId === job.id
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <StopCircle className="w-3.5 h-3.5" />}
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

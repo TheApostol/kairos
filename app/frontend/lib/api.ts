@@ -229,4 +229,8 @@ export async function runEnrichment() {
   })
 }
 
+export async function cancelScraperJob(jobId: string | number) {
+  return apiFetch(`/scraper/jobs/${jobId}/cancel`, { method: 'POST' })
+}
+
 export const API_BASE = API
