@@ -485,15 +485,19 @@ def export_catalog(body: CatalogExportRequest):
 
 # ─────────────────────────────────────────────
 # KAIROSDIS.COM.AR PRODUCT SCRAPER
+# Uses the site's internal Empretienda JSON API (/v4/product/category)
+# which returns 12 products per page with full price + image data.
 # ─────────────────────────────────────────────
 
 _KAIROSDIS_BASE = "https://www.kairosdis.com.ar"
+_KD_CDN = "https://d22fxaf9t8d39k.cloudfront.net/"
 
+# Known main-category URLs — used as fallback if homepage nav parse fails
 _KAIROSDIS_FALLBACK_CATEGORIES = [
     "/sahumerios", "/velas", "/dijes", "/kits-y-promociones",
     "/difusores-y-quemadores", "/fuentes-de-agua",
     "/decoracion", "/tarot-y-libros", "/imagenes-religiosas",
-    "/fluidos-esotericos", "/bijouterie",
+    "/fluidos-esotericos",
 ]
 
 _KD_HEADERS = {
@@ -506,12 +510,11 @@ _KD_HEADERS = {
     "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
 }
 
-_KD_SKIP_PATHS = {
+_KD_SKIP = {
     "/carrito", "/cart", "/cuenta", "/account", "/login", "/ingresa",
-    "/checkout", "/buscar", "/search", "/contacto", "/contact",
-    "/newsletter", "/ayuda", "/terminos", "/privacidad",
-    "/quienes-somos", "/sobre-nosotros", "/envios", "/preguntas",
-    "/mapa-del-sitio", "/sitemap",
+    "/checkout", "/buscar", "/search", "/contacto", "/newsletter",
+    "/quienes-somos", "/sobre-nosotros", "/envios", "/terminos",
+    "/privacidad", "/mapa-del-sitio",
 }
 
 _kairosdis_job: dict = {
@@ -520,92 +523,117 @@ _kairosdis_job: dict = {
 }
 
 
-def _kd_valid_path(path: str) -> bool:
-    p = path.rstrip("/")
-    if not p or p in _KD_SKIP_PATHS:
-        return False
-    if any(p.startswith(s) for s in ("/api/", "/admin/", "/_", "/static/")):
-        return False
-    if re.search(r'\.[a-zA-Z]{2,5}$', p):  # file extension → asset, not page
-        return False
-    return bool(re.match(r'^/[a-zA-ZáéíóúüÁÉÍÓÚÜñÑ]', p))
-
-
-def _kd_extract_links(html: str) -> list:
-    seen: set = set()
-    result = []
-    for href in re.findall(r'href=["\']([^"\']+)["\']', html):
-        path = href.strip().split("?")[0].split("#")[0].rstrip("/")
-        if path.startswith("/") and _kd_valid_path(path) and path not in seen:
-            seen.add(path)
-            result.append(path)
-    return result
-
-
-def _kd_fetch(url: str) -> str:
+def _kd_discover_categories() -> list:
+    """Fetch homepage and extract 1-segment category paths from nav links."""
     import httpx
-    time.sleep(0.25)
     try:
         with httpx.Client(timeout=20, follow_redirects=True) as c:
-            r = c.get(url, headers=_KD_HEADERS)
-            return r.text if r.status_code == 200 else ""
+            resp = c.get(_KAIROSDIS_BASE, headers=_KD_HEADERS)
+        links = set()
+        for href in re.findall(r'href=["\']([^"\']+)["\']', resp.text):
+            path = href.strip().rstrip("/")
+            if (path.startswith("/") and path.count("/") == 1
+                    and re.match(r'^/[a-zA-Z]', path)
+                    and not re.search(r'\.\w+$', path)
+                    and path not in _KD_SKIP):
+                links.add(path)
+        return list(links)
     except Exception:
-        return ""
+        return []
 
 
-def _kd_parse_product(html: str, path: str) -> Optional[dict]:
-    if not html:
-        return None
+def _kd_scrape_category(cat_path: str) -> tuple:
+    """
+    Fetch ALL products for a category via the /v4/product/category JSON API.
+    Returns (category_name, [raw_product_dicts]).
+    Each call creates its own httpx session to get a fresh CSRF token.
+    """
+    import httpx
+    cat_name = cat_path.lstrip("/").split("/")[0]
+    products_raw = []
 
-    # Name: strip site suffix from <title>
-    title_m = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
-    if title_m:
-        title = title_m.group(1).strip()
-        for sep in (" | ", " - ", " – ", " — "):
-            if sep in title:
-                title = title.split(sep)[0].strip()
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        # Step 1: load the category page to obtain session cookie + CSRF + ids array
+        time.sleep(0.3)
+        resp = client.get(_KAIROSDIS_BASE + cat_path, headers=_KD_HEADERS)
+        if resp.status_code != 200:
+            return cat_name, []
+
+        html = resp.text
+        csrf_m = re.search(r'<meta name="csrf-token" content="([^"]+)"', html)
+        ids_m = re.search(r'var ids = \[([^\]]+)\]', html)
+        if not csrf_m or not ids_m:
+            return cat_name, []
+
+        csrf_token = csrf_m.group(1)
+        ids = [x.strip() for x in ids_m.group(1).split(",")]
+
+        api_headers = {
+            **_KD_HEADERS,
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-TOKEN": csrf_token,
+            "Referer": _KAIROSDIS_BASE + cat_path,
+        }
+
+        # Step 2: paginate — 12 items per page, stop when < 12 returned
+        for page in range(500):  # cap: 500 pages × 12 = 6 000 products max
+            time.sleep(0.25)
+            params = [("filter_page", page), ("filter_order", "2")]
+            for cat_id in ids:
+                params.append(("filter_categories[]", cat_id))
+
+            try:
+                api_resp = client.get(
+                    _KAIROSDIS_BASE + "/v4/product/category",
+                    params=params,
+                    headers=api_headers,
+                )
+                if api_resp.status_code != 200:
+                    break
+                data = api_resp.json().get("data", [])
+            except Exception:
                 break
-        name = title
-    else:
-        name = path.rstrip("/").split("/")[-1].replace("-", " ").title()
 
-    if not name:
-        return None
+            if not data:
+                break
+            products_raw.extend(data)
+            if len(data) < 12:
+                break
 
-    # Numeric product ID from inline JS
-    id_m = re.search(r'var\s+idStock_seleccionado\s*=\s*(\d+)', html)
-    product_id = id_m.group(1) if id_m else None
+    return cat_name, products_raw
 
-    # Price
-    price_m = re.search(r'"s_precio"\s*:\s*([\d.]+)', html)
-    price = float(price_m.group(1)) if price_m else None
 
-    # Promo / sale price
-    promo_m = re.search(r'"precio_oferta"\s*:\s*([\d.]+)', html)
-    promo = float(promo_m.group(1)) if promo_m else None
-    if promo == 0.0:
+def _kd_map_product(raw: dict, category: str) -> dict:
+    """Map an Empretienda API product dict to our products table schema."""
+    images = [
+        _KD_CDN + img["i_link"]
+        for img in raw.get("imagenes", [])
+        if img.get("i_link")
+    ]
+
+    price = raw.get("p_precio") or None
+    mayorista = raw.get("p_precio_mayorista") or None
+    if mayorista == 0:
+        mayorista = None
+    promo = raw.get("p_precio_oferta") or None
+    if promo == 0:
         promo = None
 
-    # CDN product images
-    images = list(dict.fromkeys(re.findall(
-        r'https://d22fxaf9t8d39k\.cloudfront\.net/[a-zA-Z0-9]+\.(?:webp|jpg|jpeg|png)',
-        html,
-    )))
-
-    parts = path.lstrip("/").rstrip("/").split("/")
-    category = parts[0] if parts else "otros"
-    sku = product_id if product_id else "/".join(parts)
+    desc = (raw.get("p_descripcion") or "").strip() or None
 
     return {
-        "nombre": name,
-        "sku": sku,
+        "nombre": raw["p_nombre"],
+        "sku": str(raw["idProductos"]),
+        "descripcion": desc,
         "categoria": category,
         "precio_minorista": price,
+        "precio_mayorista": mayorista,
         "precio_promo": promo,
         "imagen_url": images[0] if images else None,
         "imagenes_extra": images[1:] if len(images) > 1 else None,
-        "activo": True,
-        "destacado": False,
+        "activo": not bool(raw.get("p_desactivado", 0)),
+        "destacado": bool(raw.get("p_destacado", 0)),
     }
 
 
@@ -617,83 +645,62 @@ def _run_kairosdis_scraper() -> None:
     }
 
     try:
-        # Phase 1: discover main categories from homepage
+        # Phase 1: discover category pages
         _kairosdis_job["status"] = "Descubriendo categorías..."
-        home_html = _kd_fetch(_KAIROSDIS_BASE)
-        home_links = _kd_extract_links(home_html)
+        cat_paths = _kd_discover_categories()
+        if len(cat_paths) < 3:
+            cat_paths = _KAIROSDIS_FALLBACK_CATEGORIES
 
-        category_paths = [l for l in home_links if l.count("/") == 1]
-        if not category_paths:
-            category_paths = _KAIROSDIS_FALLBACK_CATEGORIES
+        _kairosdis_job["status"] = f"Cargando {len(cat_paths)} categorías via API..."
 
-        product_paths: set = set(l for l in home_links if l.count("/") >= 3)
+        # Phase 2: fetch all products from every category in parallel
+        all_raw: list = []
+        seen_ids: set = set()
 
-        # Phase 2: crawl each category page → collect subcategories + products
-        _kairosdis_job["status"] = f"Explorando {len(category_paths)} categorías..."
-
-        def crawl_cat(cat_path: str):
-            html = _kd_fetch(_KAIROSDIS_BASE + cat_path)
-            links = _kd_extract_links(html)
-            subcats = [l for l in links if l.count("/") == 2]
-            prods = [l for l in links if l.count("/") >= 3]
-            return subcats, prods
-
-        subcategory_paths: set = set()
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            for subcats, prods in ex.map(crawl_cat, category_paths):
-                subcategory_paths.update(subcats)
-                product_paths.update(prods)
-
-        # Phase 3: crawl subcategory pages → more products
-        _kairosdis_job["status"] = f"Explorando {len(subcategory_paths)} subcategorías..."
-
-        def crawl_sub(sub_path: str):
-            html = _kd_fetch(_KAIROSDIS_BASE + sub_path)
-            links = _kd_extract_links(html)
-            return [l for l in links if l.count("/") >= 3]
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            for prods in ex.map(crawl_sub, subcategory_paths):
-                product_paths.update(prods)
-
-        # Phase 4: scrape each product detail page
-        product_list = list(product_paths)
-        _kairosdis_job["total"] = len(product_list)
-        _kairosdis_job["status"] = f"Scrapeando {len(product_list)} productos..."
-
-        existing = db.select("products", select_cols="id,sku")
-        existing_skus: dict = {p["sku"]: p["id"] for p in existing if p.get("sku")}
-
-        def scrape_one(path: str):
-            html = _kd_fetch(_KAIROSDIS_BASE + path)
-            return _kd_parse_product(html, path)
-
-        processed = 0
-        now = datetime.utcnow().isoformat()
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = {ex.submit(scrape_one, p): p for p in product_list}
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = {ex.submit(_kd_scrape_category, p): p for p in cat_paths}
+            done = 0
             for f in as_completed(futures):
-                processed += 1
-                _kairosdis_job["progress"] = int(processed / max(len(product_list), 1) * 100)
+                done += 1
+                # First half of progress bar covers the API crawl phase
+                _kairosdis_job["progress"] = int(done / len(cat_paths) * 50)
                 try:
-                    data = f.result()
-                    if data is None:
-                        continue
-                    sku = data.get("sku")
-                    if sku and sku in existing_skus:
-                        data["updated_at"] = now
-                        db.update("products", existing_skus[sku], data)
-                        _kairosdis_job["updated"] += 1
-                    else:
-                        data["created_at"] = now
-                        data["updated_at"] = now
-                        inserted = db.insert("products", data)
-                        _kairosdis_job["new"] += 1
-                        if sku and isinstance(inserted, dict) and inserted.get("id"):
-                            existing_skus[sku] = inserted["id"]
+                    cat_name, products_raw = f.result()
+                    for p in products_raw:
+                        pid = str(p.get("idProductos", ""))
+                        if pid and pid not in seen_ids:
+                            seen_ids.add(pid)
+                            p["_cat"] = cat_name
+                            all_raw.append(p)
                 except Exception as e:
                     _kairosdis_job["errors"].append(str(e)[:120])
+
+        _kairosdis_job["total"] = len(all_raw)
+        _kairosdis_job["status"] = f"Guardando {len(all_raw)} productos..."
+
+        # Phase 3: upsert into products table
+        existing = db.select("products", select_cols="id,sku")
+        existing_skus: dict = {p["sku"]: p["id"] for p in existing if p.get("sku")}
+        now = datetime.utcnow().isoformat()
+
+        for i, raw in enumerate(all_raw):
+            _kairosdis_job["progress"] = 50 + int(i / max(len(all_raw), 1) * 50)
+            try:
+                data = _kd_map_product(raw, raw.pop("_cat", "otros"))
+                sku = data.get("sku")
+                if sku and sku in existing_skus:
+                    data["updated_at"] = now
+                    db.update("products", existing_skus[sku], data)
+                    _kairosdis_job["updated"] += 1
+                else:
+                    data["created_at"] = now
+                    data["updated_at"] = now
+                    inserted = db.insert("products", data)
+                    _kairosdis_job["new"] += 1
+                    if sku and isinstance(inserted, dict) and inserted.get("id"):
+                        existing_skus[sku] = inserted["id"]
+            except Exception as e:
+                _kairosdis_job["errors"].append(str(e)[:120])
 
         _kairosdis_job["status"] = "completed"
         _kairosdis_job["progress"] = 100
