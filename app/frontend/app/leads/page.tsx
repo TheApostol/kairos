@@ -213,9 +213,16 @@ export default function LeadsPage() {
         rubro !== 'all' ? rubro : 'tiendas holísticas y de sahumerios',
         provincia !== 'all' ? `en ${provincia}` : 'en Argentina',
       ].join(' ')
+      const selectedLeads = leads.filter((l) => selectedIds.has(l.id))
+      const singleLead = selectedLeads.length === 1 ? selectedLeads[0] : null
       const result = await generateCampaignText({
         tipo: 'email',
         segmento_desc: segDesc,
+        ...(singleLead ? {
+          empresa: singleLead.empresa,
+          ciudad: singleLead.ciudad,
+          rubro: singleLead.rubro,
+        } : {}),
       })
       if (result.asunto) setEmailSubject(result.asunto)
       if (result.cuerpo) setEmailBody(result.cuerpo)

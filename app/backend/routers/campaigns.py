@@ -1,7 +1,7 @@
 import json
 import re
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
@@ -29,6 +29,9 @@ class GenerateTextRequest(BaseModel):
     tipo: str
     segmento_desc: str
     producto_destacado: Optional[str] = None
+    empresa: Optional[str] = None
+    ciudad: Optional[str] = None
+    rubro: Optional[str] = None
 
 
 class QuickSendRequest(BaseModel):
@@ -102,7 +105,7 @@ def _execute_campaign(campaign_id: str):
     db.update("campaigns", campaign_id, {
         "estado": "enviando",
         "total_leads": total,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     })
 
     enviados = 0
@@ -115,7 +118,7 @@ def _execute_campaign(campaign_id: str):
             "lead_id": lead.get("id"),
             "estado": "pendiente",
             "email_dest": email_dest,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
         if campaign.get("tipo") == "email" and email_dest:
@@ -128,7 +131,7 @@ def _execute_campaign(campaign_id: str):
             )
             if result.get("success"):
                 send_record["estado"] = "enviado"
-                send_record["enviado_at"] = datetime.utcnow().isoformat()
+                send_record["enviado_at"] = datetime.now(timezone.utc).isoformat()
                 enviados += 1
             else:
                 send_record["estado"] = "error"
@@ -136,7 +139,7 @@ def _execute_campaign(campaign_id: str):
                 errors += 1
         else:
             send_record["estado"] = "enviado"
-            send_record["enviado_at"] = datetime.utcnow().isoformat()
+            send_record["enviado_at"] = datetime.now(timezone.utc).isoformat()
             enviados += 1
 
         db.insert("campaign_sends", send_record)
@@ -144,8 +147,8 @@ def _execute_campaign(campaign_id: str):
     db.update("campaigns", campaign_id, {
         "estado": "completada",
         "enviados": enviados,
-        "fecha_envio": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat(),
+        "fecha_envio": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     })
 
 
@@ -239,7 +242,7 @@ def send_catalogue_to_clients(background_tasks: BackgroundTasks):
 
 @router.post("/followup-whatsapp")
 def get_followup_whatsapp_links(dias_sin_respuesta: int = 3):
-    cutoff = (datetime.utcnow() - timedelta(days=dias_sin_respuesta)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=dias_sin_respuesta)).isoformat()
 
     # Find leads that received an email but haven't responded and the send was at least N days ago
     sent = db.raw_select("campaign_sends", {
@@ -292,7 +295,7 @@ def duplicate_campaign(campaign_id: str):
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     original = campaigns[0]
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     new_data = {
         "nombre": f"{original.get('nombre', 'Campaña')} (copia)",
         "tipo": original.get("tipo", "email"),
@@ -355,8 +358,8 @@ def create_campaign(body: CampaignCreate):
         "clicks": 0,
         "respondidos": 0,
         "convertidos": 0,
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     campaign = db.insert("campaigns", data)
     return campaign
@@ -394,7 +397,7 @@ def send_campaign(campaign_id: str, background_tasks: BackgroundTasks):
 
     db.update("campaigns", campaign_id, {
         "estado": "programada",
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     })
 
     return {"message": "Campaign send started", "campaign_id": campaign_id}
@@ -463,10 +466,21 @@ def generate_campaign_text(body: GenerateTextRequest):
     if body.producto_destacado:
         producto_info = f"\nProducto/servicio destacado: {body.producto_destacado}"
 
+    single_lead = bool(body.empresa)
+    empresa_hint = ""
+    empresa_instruction = "- Incluí nombre de empresa como {empresa} como placeholder"
+    if single_lead:
+        empresa_hint = f"\nEmpresa destinataria: {body.empresa}"
+        if body.ciudad:
+            empresa_hint += f", {body.ciudad}"
+        if body.rubro:
+            empresa_hint += f" (rubro: {body.rubro})"
+        empresa_instruction = f"- Dirigite directamente a \"{body.empresa}\" usando su nombre real en el mensaje (no uses placeholder {{empresa}})"
+
     prompt = f"""Eres un experto en marketing y ventas B2B para una empresa Argentina llamada Kairos.
 Genera contenido de campaña {body.tipo} para el siguiente segmento de clientes:
 
-Segmento: {body.segmento_desc}{producto_info}
+Segmento: {body.segmento_desc}{empresa_hint}{producto_info}
 
 Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura (sin markdown, sin texto extra):
 {{
@@ -479,7 +493,7 @@ Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura (sin markdown, sin t
 
 Consideraciones:
 - Usa tuteo o voseo argentino según corresponda al segmento
-- Incluí nombre de empresa como {{{{empresa}}}} como placeholder
+- {empresa_instruction}
 - El tono debe ser profesional pero cálido, no agresivo
 - Enfocate en valor y beneficios concretos
 - Máximo 150 palabras por mensaje principal"""

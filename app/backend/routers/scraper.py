@@ -167,6 +167,18 @@ def _score_lead(record: dict) -> int:
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 INSTAGRAM_REGEX = re.compile(r"instagram\.com/([A-Za-z0-9._]{1,30})")
 WA_REGEX = re.compile(r"(?:wa\.me|whatsapp\.com/send\?phone=)[/\?]?(\d{6,15})")
+# Broad Argentina phone pattern: captures 8-15 digit sequences from tel: links and text
+TEL_HREF_REGEX = re.compile(r'href=["\']tel:([+\d\s\-().]{6,20})["\']', re.IGNORECASE)
+# Phone pattern in plain text: handles formats like (011) 4567-8901, 011-15-1234-5678, +54 9 11 etc.
+PHONE_TEXT_REGEX = re.compile(
+    r'(?<!\d)'
+    r'(?:\+54[\s\-]?)?'
+    r'(?:0?11|0?[2-9]\d{1,3})?'
+    r'[\s\-]?'
+    r'(?:15[\s\-]?)?'
+    r'\d{4}[\s\-]?\d{4}'
+    r'(?!\d)'
+)
 
 _ENRICH_HEADERS = {
     "User-Agent": (
@@ -175,12 +187,93 @@ _ENRICH_HEADERS = {
     )
 }
 
-
 FAKE_EMAIL_FRAGMENTS = [
-    "noreply", "example", "domain", "sentry", "wix", "shopify", "wordpress", "your@",
+    "noreply", "no-reply", "example", "domain.com", "sentry", "wix.com", "shopify",
+    "wordpress", "your@", "test@", "info@example", "@sentry", "yourdomain",
+    "schema.org", "w3.org", "placeholder",
 ]
 
-TEL_REGEX = re.compile(r'<a[^>]+href=["\']tel:([^"\'>\s]+)["\']', re.IGNORECASE)
+
+def _is_valid_email(email: str) -> bool:
+    e = email.lower()
+    return (
+        "@" in e
+        and "." in e.split("@")[-1]
+        and not any(x in e for x in FAKE_EMAIL_FRAGMENTS)
+        and len(e) >= 6
+    )
+
+
+def _extract_from_soup(soup, result: dict) -> None:
+    """Extract contact info using BeautifulSoup from parsed HTML."""
+    from bs4 import BeautifulSoup  # already imported by caller
+
+    # 1. JSON-LD schema.org — most reliable source
+    for script in soup.find_all("script", {"type": "application/ld+json"}):
+        try:
+            data = json.loads(script.string or "")
+            if isinstance(data, list):
+                data = data[0]
+            if not result["email"] and data.get("email"):
+                candidate = str(data["email"]).strip()
+                if _is_valid_email(candidate):
+                    result["email"] = candidate
+            if not result["telefono"] and data.get("telephone"):
+                result["telefono"] = str(data["telephone"]).strip()
+        except Exception:
+            pass
+
+    # 2. Microdata: itemprop attributes
+    for el in soup.find_all(itemprop=True):
+        prop = el.get("itemprop", "")
+        if prop == "email" and not result["email"]:
+            candidate = el.get("content") or el.get_text(strip=True)
+            if candidate and _is_valid_email(candidate):
+                result["email"] = candidate
+        if prop == "telephone" and not result["telefono"]:
+            val = el.get("content") or el.get_text(strip=True)
+            if val:
+                result["telefono"] = val.strip()
+
+    # 3. All <a> tags — mailto, tel, instagram, whatsapp
+    for a in soup.find_all("a", href=True):
+        href = str(a.get("href", ""))
+        if "mailto:" in href and not result["email"]:
+            candidate = href.split("mailto:")[-1].split("?")[0].strip()
+            if _is_valid_email(candidate):
+                result["email"] = candidate
+        if href.startswith("tel:") and not result["telefono"]:
+            raw = href[4:].strip().replace(" ", "").replace("-", "")
+            if raw:
+                result["telefono"] = href[4:].strip()
+        if "instagram.com" in href and not result["instagram"]:
+            ig = INSTAGRAM_REGEX.search(href)
+            if ig and ig.group(1) not in ("p", "reel", "stories", "explore", "accounts"):
+                result["instagram"] = f"@{ig.group(1)}"
+        if ("wa.me" in href or "whatsapp.com" in href) and not result["whatsapp"]:
+            wa = WA_REGEX.search(href)
+            if wa:
+                result["whatsapp"] = wa.group(1)
+
+    # 4. Focus on footer / contact-section text for email if still missing
+    if not result["email"]:
+        priority_zones = (
+            soup.find_all("footer")
+            + soup.find_all(class_=re.compile(r"footer|contact|contacto|pie|bottom", re.I))
+            + soup.find_all(id=re.compile(r"footer|contact|contacto|pie|bottom", re.I))
+        )
+        for zone in priority_zones:
+            emails = EMAIL_REGEX.findall(zone.get_text())
+            valid = [e for e in emails if _is_valid_email(e)]
+            if valid:
+                result["email"] = valid[0]
+                break
+
+    # 5. Fallback: scan all text for phone if still missing
+    if not result["telefono"]:
+        tel_matches = TEL_HREF_REGEX.findall(str(soup))
+        if tel_matches:
+            result["telefono"] = tel_matches[0].strip()
 
 
 def _scrape_website(url: str) -> dict:
@@ -196,10 +289,16 @@ def _scrape_website(url: str) -> dict:
         return result
 
     base_url = url.rstrip("/")
-    pages_to_try = [base_url, base_url + "/contacto", base_url + "/contact"]
+    pages_to_try = [
+        base_url,
+        base_url + "/contacto",
+        base_url + "/contactanos",
+        base_url + "/contact",
+        base_url + "/sobre-nosotros",
+    ]
 
     try:
-        with httpx.Client(timeout=10, follow_redirects=True) as client:
+        with httpx.Client(timeout=12, follow_redirects=True) as client:
             for page_url in pages_to_try:
                 try:
                     resp = client.get(page_url, headers=_ENRICH_HEADERS)
@@ -208,49 +307,29 @@ def _scrape_website(url: str) -> dict:
 
                     text = resp.text
 
-                    if not result["email"]:
-                        emails = EMAIL_REGEX.findall(text)
-                        valid_emails = [
-                            e for e in emails
-                            if not any(x in e.lower() for x in FAKE_EMAIL_FRAGMENTS)
-                        ]
-                        if valid_emails:
-                            result["email"] = valid_emails[0]
-
-                    if not result["instagram"]:
-                        ig_matches = INSTAGRAM_REGEX.findall(text)
-                        if ig_matches:
-                            result["instagram"] = f"@{ig_matches[0]}"
-
-                    if not result["whatsapp"]:
-                        wa_matches = WA_REGEX.findall(text)
-                        if wa_matches:
-                            result["whatsapp"] = wa_matches[0]
-
-                    if not result["telefono"]:
-                        tel_matches = TEL_REGEX.findall(text)
-                        if tel_matches:
-                            result["telefono"] = tel_matches[0]
-
                     if bs4_available:
                         from bs4 import BeautifulSoup
                         soup = BeautifulSoup(text, "html.parser")
-                        for a in soup.find_all("a", href=True):
-                            href = a["href"]
-                            if "instagram.com" in href and not result["instagram"]:
-                                ig = INSTAGRAM_REGEX.search(href)
-                                if ig:
-                                    result["instagram"] = f"@{ig.group(1)}"
-                            if "wa.me" in href and not result["whatsapp"]:
-                                wa = WA_REGEX.search(href)
-                                if wa:
-                                    result["whatsapp"] = wa.group(1)
-                            if "mailto:" in href and not result["email"]:
-                                candidate = href.replace("mailto:", "").split("?")[0]
-                                if not any(x in candidate.lower() for x in FAKE_EMAIL_FRAGMENTS):
-                                    result["email"] = candidate
-                            if href.startswith("tel:") and not result["telefono"]:
-                                result["telefono"] = href[4:].strip()
+                        _extract_from_soup(soup, result)
+                    else:
+                        # Fallback regex-only path
+                        if not result["email"]:
+                            emails = EMAIL_REGEX.findall(text)
+                            valid = [e for e in emails if _is_valid_email(e)]
+                            if valid:
+                                result["email"] = valid[0]
+                        if not result["instagram"]:
+                            ig_m = INSTAGRAM_REGEX.findall(text)
+                            if ig_m:
+                                result["instagram"] = f"@{ig_m[0]}"
+                        if not result["whatsapp"]:
+                            wa_m = WA_REGEX.findall(text)
+                            if wa_m:
+                                result["whatsapp"] = wa_m[0]
+                        if not result["telefono"]:
+                            tel_m = TEL_HREF_REGEX.findall(text)
+                            if tel_m:
+                                result["telefono"] = tel_m[0].strip()
 
                     if result["email"] and result["telefono"]:
                         break
@@ -421,6 +500,9 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                     update_data[field] = enrich[field]
 
             if update_data:
+                # Recalculate score with enriched data
+                merged = {**lead, **update_data}
+                update_data["score_ia"] = _score_lead(merged)
                 update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
                 db.update("leads", lead["id"], update_data)
                 enriched_count += 1
