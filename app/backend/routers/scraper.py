@@ -176,6 +176,13 @@ _ENRICH_HEADERS = {
 }
 
 
+FAKE_EMAIL_FRAGMENTS = [
+    "noreply", "example", "domain", "sentry", "wix", "shopify", "wordpress", "your@",
+]
+
+TEL_REGEX = re.compile(r'<a[^>]+href=["\']tel:([^"\'>\s]+)["\']', re.IGNORECASE)
+
+
 def _scrape_website(url: str) -> dict:
     import httpx
     try:
@@ -184,49 +191,72 @@ def _scrape_website(url: str) -> dict:
     except ImportError:
         bs4_available = False
 
-    result = {"email": "", "instagram": "", "whatsapp": ""}
+    result = {"email": "", "instagram": "", "whatsapp": "", "telefono": ""}
     if not url or not url.startswith("http"):
         return result
 
+    base_url = url.rstrip("/")
+    pages_to_try = [base_url, base_url + "/contacto", base_url + "/contact"]
+
     try:
         with httpx.Client(timeout=10, follow_redirects=True) as client:
-            resp = client.get(url, headers=_ENRICH_HEADERS)
-            if resp.status_code != 200:
-                return result
+            for page_url in pages_to_try:
+                try:
+                    resp = client.get(page_url, headers=_ENRICH_HEADERS)
+                    if resp.status_code != 200:
+                        continue
 
-        text = resp.text
+                    text = resp.text
 
-        emails = EMAIL_REGEX.findall(text)
-        valid_emails = [
-            e for e in emails
-            if not any(x in e for x in ["example", "domain", "sentry", "wix", "shopify"])
-        ]
-        if valid_emails:
-            result["email"] = valid_emails[0]
+                    if not result["email"]:
+                        emails = EMAIL_REGEX.findall(text)
+                        valid_emails = [
+                            e for e in emails
+                            if not any(x in e.lower() for x in FAKE_EMAIL_FRAGMENTS)
+                        ]
+                        if valid_emails:
+                            result["email"] = valid_emails[0]
 
-        ig_matches = INSTAGRAM_REGEX.findall(text)
-        if ig_matches:
-            result["instagram"] = f"@{ig_matches[0]}"
+                    if not result["instagram"]:
+                        ig_matches = INSTAGRAM_REGEX.findall(text)
+                        if ig_matches:
+                            result["instagram"] = f"@{ig_matches[0]}"
 
-        wa_matches = WA_REGEX.findall(text)
-        if wa_matches:
-            result["whatsapp"] = wa_matches[0]
+                    if not result["whatsapp"]:
+                        wa_matches = WA_REGEX.findall(text)
+                        if wa_matches:
+                            result["whatsapp"] = wa_matches[0]
 
-        if bs4_available:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(text, "html.parser")
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                if "instagram.com" in href and not result["instagram"]:
-                    ig = INSTAGRAM_REGEX.search(href)
-                    if ig:
-                        result["instagram"] = f"@{ig.group(1)}"
-                if "wa.me" in href and not result["whatsapp"]:
-                    wa = WA_REGEX.search(href)
-                    if wa:
-                        result["whatsapp"] = wa.group(1)
-                if "mailto:" in href and not result["email"]:
-                    result["email"] = href.replace("mailto:", "").split("?")[0]
+                    if not result["telefono"]:
+                        tel_matches = TEL_REGEX.findall(text)
+                        if tel_matches:
+                            result["telefono"] = tel_matches[0]
+
+                    if bs4_available:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(text, "html.parser")
+                        for a in soup.find_all("a", href=True):
+                            href = a["href"]
+                            if "instagram.com" in href and not result["instagram"]:
+                                ig = INSTAGRAM_REGEX.search(href)
+                                if ig:
+                                    result["instagram"] = f"@{ig.group(1)}"
+                            if "wa.me" in href and not result["whatsapp"]:
+                                wa = WA_REGEX.search(href)
+                                if wa:
+                                    result["whatsapp"] = wa.group(1)
+                            if "mailto:" in href and not result["email"]:
+                                candidate = href.replace("mailto:", "").split("?")[0]
+                                if not any(x in candidate.lower() for x in FAKE_EMAIL_FRAGMENTS):
+                                    result["email"] = candidate
+                            if href.startswith("tel:") and not result["telefono"]:
+                                result["telefono"] = href[4:].strip()
+
+                    if result["email"] and result["telefono"]:
+                        break
+
+                except Exception:
+                    continue
 
     except Exception:
         pass
@@ -365,12 +395,14 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
-        params = {"select": "*", "website": "neq.", "email": "eq.", "limit": 500}
+        params = {"select": "*", "website": "neq.", "limit": 1000}
         if lead_ids:
             ids_str = ",".join(lead_ids)
             params = {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)}
 
         leads = db.raw_select("leads", params)
+        if not lead_ids:
+            leads = [l for l in leads if not l.get("email")]  # filter null or empty in Python
         total = len(leads)
         enriched_count = 0
 
@@ -384,7 +416,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             enrich = _scrape_website(website)
             update_data = {}
 
-            for field in ["email", "instagram", "whatsapp"]:
+            for field in ["email", "instagram", "whatsapp", "telefono"]:
                 if enrich.get(field) and not lead.get(field):
                     update_data[field] = enrich[field]
 

@@ -67,11 +67,15 @@ export default function ScraperPage() {
   const logRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
+  const [refreshing, setRefreshing] = useState(false)
+
   const fetchHistory = async () => {
+    setRefreshing(true)
     try {
       const data = await getScraperHistory()
       setHistory(data.items ?? data ?? [])
     } catch {}
+    finally { setRefreshing(false) }
   }
 
   useEffect(() => {
@@ -139,8 +143,19 @@ export default function ScraperPage() {
     setEnrichState('running')
     try {
       await runEnrichment()
-      setEnrichState('done')
-      fetchHistory()
+      // Backend runs as background job — poll history every 5s until done
+      const interval = setInterval(async () => {
+        const data = await getScraperHistory()
+        const jobs = data.items ?? data ?? []
+        const latest = jobs[0]
+        if (latest && (latest.estado === 'completado' || latest.estado === 'error')) {
+          clearInterval(interval)
+          setEnrichState(latest.estado === 'completado' ? 'done' : 'error')
+          setHistory(jobs)
+        }
+      }, 5000)
+      // Safety: stop polling after 10 minutes
+      setTimeout(() => { clearInterval(interval); setEnrichState('done') }, 600000)
     } catch {
       setEnrichState('error')
     }
@@ -323,8 +338,8 @@ export default function ScraperPage() {
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Historial de Jobs</CardTitle>
-            <Button variant="ghost" size="sm" onClick={fetchHistory}>
-              <RefreshCw className="w-4 h-4" />
+            <Button variant="ghost" size="sm" onClick={fetchHistory} disabled={refreshing}>
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             </Button>
           </div>
         </CardHeader>

@@ -18,7 +18,20 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle } from 'lucide-react'
+import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2 } from 'lucide-react'
+import Link from 'next/link'
+import { getLeads } from '@/lib/api'
+
+interface RecentLead {
+  id: string
+  empresa: string
+  ciudad?: string
+  provincia?: string
+  email?: string
+  estado: string
+  score_ia?: number
+  created_at?: string
+}
 
 interface LeadStats {
   total: number
@@ -58,6 +71,7 @@ export default function DashboardPage() {
   const [leadStats, setLeadStats] = useState<LeadStats | null>(null)
   const [orderStats, setOrderStats] = useState<OrderStats | null>(null)
   const [overdueTasksCount, setOverdueTasksCount] = useState<number | null>(null)
+  const [recentLeads, setRecentLeads] = useState<RecentLead[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -70,10 +84,13 @@ export default function DashboardPage() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
 
-    // Load overdue tasks count independently so it doesn't block main load
     getTodayTasks()
       .then((res) => setOverdueTasksCount(res?.total ?? 0))
       .catch(() => setOverdueTasksCount(0))
+
+    getLeads({ limit: 8, page: 1 })
+      .then((res) => setRecentLeads(res?.items ?? []))
+      .catch(() => {})
   }, [])
 
   if (loading) {
@@ -94,6 +111,7 @@ export default function DashboardPage() {
 
   const totalLeads = leadStats?.total ?? 0
   const clientesCount = (leadStats?.por_estado ?? []).find((e) => e.estado === 'cliente')?.count ?? 0
+  const sinEmail = leadStats ? (leadStats.total - leadStats.con_email) : 0
   const conversionRate = totalLeads > 0 ? ((clientesCount / totalLeads) * 100).toFixed(1) : '0'
 
   const statCards = [
@@ -103,6 +121,7 @@ export default function DashboardPage() {
       icon: Users,
       iconColor: '#C9A040',
       iconBg: 'rgba(201,160,64,0.12)',
+      href: '/leads',
     },
     {
       title: 'Con Email',
@@ -110,13 +129,23 @@ export default function DashboardPage() {
       icon: Mail,
       iconColor: '#22c55e',
       iconBg: '#f0fdf4',
+      href: '/leads',
     },
     {
-      title: 'Órdenes Activas',
-      value: orderStats?.ordenes_activas?.toLocaleString('es-AR') ?? '—',
-      icon: ShoppingBag,
+      title: 'Sin Email',
+      value: leadStats ? sinEmail.toLocaleString('es-AR') : '—',
+      icon: Mail,
+      iconColor: sinEmail > 500 ? '#dc2626' : '#f59e0b',
+      iconBg: sinEmail > 500 ? '#fef2f2' : '#fffbeb',
+      href: '/scraper',
+    },
+    {
+      title: 'Clientes',
+      value: clientesCount.toLocaleString('es-AR'),
+      icon: Building2,
       iconColor: '#6B4F3A',
       iconBg: 'rgba(107,79,58,0.1)',
+      href: '/leads',
     },
     {
       title: 'Revenue del Mes',
@@ -124,13 +153,7 @@ export default function DashboardPage() {
       icon: TrendingUp,
       iconColor: '#4A3728',
       iconBg: 'rgba(74,55,40,0.1)',
-    },
-    {
-      title: 'Tasa de Conversión',
-      value: leadStats ? `${conversionRate}%` : '—',
-      icon: TrendingUp,
-      iconColor: '#22c55e',
-      iconBg: '#f0fdf4',
+      href: '/orders',
     },
     {
       title: 'Tareas Vencidas',
@@ -139,6 +162,7 @@ export default function DashboardPage() {
       iconColor: overdueTasksCount && overdueTasksCount > 0 ? '#dc2626' : '#22c55e',
       iconBg: overdueTasksCount && overdueTasksCount > 0 ? '#fef2f2' : '#f0fdf4',
       urgent: overdueTasksCount !== null && overdueTasksCount > 0,
+      href: '/leads',
     },
   ]
 
@@ -170,23 +194,25 @@ export default function DashboardPage() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        {statCards.map(({ title, value, icon: Icon, iconColor, iconBg, ...rest }) => {
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {statCards.map(({ title, value, icon: Icon, iconColor, iconBg, href, ...rest }) => {
           const urgent = (rest as { urgent?: boolean }).urgent
           return (
-            <Card key={title} className={urgent ? 'ring-2 ring-red-300' : ''}>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium" style={{ color: '#6B4F3A' }}>{title}</p>
-                    <p className={`text-2xl font-bold mt-1 ${urgent ? 'text-red-600' : ''}`} style={urgent ? undefined : { color: '#4A3728' }}>{value}</p>
+            <Link key={title} href={href ?? '#'}>
+              <Card className={`cursor-pointer hover:shadow-md transition-shadow ${urgent ? 'ring-2 ring-red-300' : ''}`}>
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate" style={{ color: '#6B4F3A' }}>{title}</p>
+                      <p className={`text-xl font-bold mt-0.5 ${urgent ? 'text-red-600' : ''}`} style={urgent ? undefined : { color: '#4A3728' }}>{value}</p>
+                    </div>
+                    <div className="p-2 rounded-lg flex-shrink-0" style={{ backgroundColor: iconBg }}>
+                      <Icon className="w-4 h-4" style={{ color: iconColor }} />
+                    </div>
                   </div>
-                  <div className="p-3 rounded-lg" style={{ backgroundColor: iconBg }}>
-                    <Icon className="w-6 h-6" style={{ color: iconColor }} />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Link>
           )
         })}
       </div>
@@ -252,6 +278,66 @@ export default function DashboardPage() {
               </ResponsiveContainer>
             ) : (
               <div className="h-64 flex items-center justify-center" style={{ color: '#6B4F3A' }}>Sin datos</div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Lead Funnel + Recent Leads */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Lead Funnel */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold" style={{ color: '#4A3728' }}>Embudo de Leads</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {estadoData.length > 0 ? estadoData.map((d) => {
+              const pct = totalLeads > 0 ? (d.value / totalLeads) * 100 : 0
+              return (
+                <div key={d.estado} className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span style={{ color: '#4A3728' }}>{d.name}</span>
+                    <span className="font-semibold" style={{ color: '#4A3728' }}>{d.value.toLocaleString('es-AR')} <span className="text-xs font-normal" style={{ color: '#6B4F3A' }}>({pct.toFixed(1)}%)</span></span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                    <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: ESTADO_COLORS[d.estado] ?? '#9ca3af' }} />
+                  </div>
+                </div>
+              )
+            }) : <p className="text-slate-400 text-sm">Sin datos</p>}
+          </CardContent>
+        </Card>
+
+        {/* Recent Leads */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-semibold" style={{ color: '#4A3728' }}>Últimos Leads</CardTitle>
+              <Link href="/leads" className="text-xs hover:underline" style={{ color: '#C9A040' }}>Ver todos →</Link>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {recentLeads.length === 0 ? (
+              <p className="text-sm text-slate-400 px-6 py-4">Sin leads</p>
+            ) : (
+              <div className="divide-y">
+                {recentLeads.map((lead) => (
+                  <Link key={lead.id} href={`/leads/${lead.id}`} className="flex items-center justify-between px-6 py-2.5 hover:bg-slate-50 group">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-900 truncate group-hover:text-amber-700">{lead.empresa}</p>
+                      <p className="text-xs text-slate-400">{[lead.ciudad, lead.provincia].filter(Boolean).join(', ') || '—'}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                      {lead.email ? (
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="Tiene email" />
+                      ) : (
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-300" title="Sin email" />
+                      )}
+                      <ExternalLink className="w-3 h-3 text-slate-300" />
+                    </div>
+                  </Link>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>
