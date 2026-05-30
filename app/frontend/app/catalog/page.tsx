@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { getProducts, createProduct, updateProduct, getApiUrl, sendCatalogueToClients } from '@/lib/api'
+import { getProducts, createProduct, updateProduct, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users } from 'lucide-react'
+import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe } from 'lucide-react'
 
 interface Product {
   id: number
@@ -133,6 +133,12 @@ export default function CatalogPage() {
   const [notifying, setNotifying] = useState(false)
   const [notifyResult, setNotifyResult] = useState('')
 
+  // Kairosdis scraper
+  const [scraping, setScraping] = useState(false)
+  const [scrapeJob, setScrapeJob] = useState<{
+    status: string; progress: number; total: number; new: number; updated: number; errors: string[]
+  } | null>(null)
+
   // PDF Export dialog
   const [showPdfDialog, setShowPdfDialog] = useState(false)
   const [pdfTitle, setPdfTitle] = useState('Catálogo Kairos')
@@ -149,6 +155,35 @@ export default function CatalogPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (!scraping) return
+    const interval = setInterval(async () => {
+      try {
+        const job = await getKairosdisScraperStatus()
+        setScrapeJob(job)
+        if (job.status === 'completed' || job.status === 'error') {
+          setScraping(false)
+          clearInterval(interval)
+          // Reload products after successful import
+          if (job.status === 'completed') {
+            getProducts()
+              .then((data) => {
+                const items: Product[] = data.items ?? data ?? []
+                setProducts(items)
+                const cats = Array.from(new Set(items.map((p) => p.categoria).filter(Boolean))) as string[]
+                setCategories(cats)
+              })
+              .catch(() => {})
+          }
+        }
+      } catch {
+        setScraping(false)
+        clearInterval(interval)
+      }
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [scraping])
 
   const openAddDialog = () => {
     setEditingProduct(null)
@@ -264,6 +299,27 @@ export default function CatalogPage() {
             {notifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
             {notifying ? 'Enviando...' : 'Notificar Clientes'}
           </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              setScraping(true)
+              setScrapeJob(null)
+              try {
+                await scrapeKairosdis()
+              } catch {
+                setScraping(false)
+              }
+            }}
+            disabled={scraping}
+            className="gap-2"
+          >
+            {scraping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
+            {scraping
+              ? scrapeJob
+                ? `${scrapeJob.progress}% — ${scrapeJob.status}`
+                : 'Iniciando...'
+              : 'Importar Kairosdis'}
+          </Button>
           <Button onClick={openAddDialog} className="gap-2">
             <Plus className="w-4 h-4" />
             Agregar Producto
@@ -273,6 +329,13 @@ export default function CatalogPage() {
       {notifyResult && (
         <p className={`text-sm font-medium -mt-3 ${notifyResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
           {notifyResult}
+        </p>
+      )}
+      {scrapeJob && (scrapeJob.status === 'completed' || scrapeJob.status === 'error') && (
+        <p className={`text-sm font-medium -mt-3 ${scrapeJob.status === 'completed' ? 'text-green-600' : 'text-red-500'}`}>
+          {scrapeJob.status === 'completed'
+            ? `✓ Kairosdis importado: ${scrapeJob.new} nuevos, ${scrapeJob.updated} actualizados de ${scrapeJob.total} productos`
+            : `✗ Error al importar Kairosdis${scrapeJob.errors[0] ? ': ' + scrapeJob.errors[0] : ''}`}
         </p>
       )}
 

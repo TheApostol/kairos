@@ -195,6 +195,15 @@ export async function updateProduct(id: string | number, data: Record<string, un
   })
 }
 
+// Kairosdis Product Scraper
+export async function scrapeKairosdis() {
+  return apiFetch('/products/scrape-kairosdis', { method: 'POST' })
+}
+
+export async function getKairosdisScraperStatus() {
+  return apiFetch('/products/scrape-kairosdis/status')
+}
+
 // Scraper
 export async function getScraperHistory() {
   return apiFetch('/scraper/history')

@@ -1,7 +1,10 @@
 import io
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -478,3 +481,236 @@ def export_catalog(body: CatalogExportRequest):
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ─────────────────────────────────────────────
+# KAIROSDIS.COM.AR PRODUCT SCRAPER
+# ─────────────────────────────────────────────
+
+_KAIROSDIS_BASE = "https://www.kairosdis.com.ar"
+
+_KAIROSDIS_FALLBACK_CATEGORIES = [
+    "/sahumerios", "/velas", "/dijes", "/kits-y-promociones",
+    "/difusores-y-quemadores", "/fuentes-de-agua",
+    "/decoracion", "/tarot-y-libros", "/imagenes-religiosas",
+    "/fluidos-esotericos", "/bijouterie",
+]
+
+_KD_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+}
+
+_KD_SKIP_PATHS = {
+    "/carrito", "/cart", "/cuenta", "/account", "/login", "/ingresa",
+    "/checkout", "/buscar", "/search", "/contacto", "/contact",
+    "/newsletter", "/ayuda", "/terminos", "/privacidad",
+    "/quienes-somos", "/sobre-nosotros", "/envios", "/preguntas",
+    "/mapa-del-sitio", "/sitemap",
+}
+
+_kairosdis_job: dict = {
+    "status": "idle", "progress": 0, "total": 0,
+    "new": 0, "updated": 0, "errors": [],
+}
+
+
+def _kd_valid_path(path: str) -> bool:
+    p = path.rstrip("/")
+    if not p or p in _KD_SKIP_PATHS:
+        return False
+    if any(p.startswith(s) for s in ("/api/", "/admin/", "/_", "/static/")):
+        return False
+    if re.search(r'\.[a-zA-Z]{2,5}$', p):  # file extension → asset, not page
+        return False
+    return bool(re.match(r'^/[a-zA-ZáéíóúüÁÉÍÓÚÜñÑ]', p))
+
+
+def _kd_extract_links(html: str) -> list:
+    seen: set = set()
+    result = []
+    for href in re.findall(r'href=["\']([^"\']+)["\']', html):
+        path = href.strip().split("?")[0].split("#")[0].rstrip("/")
+        if path.startswith("/") and _kd_valid_path(path) and path not in seen:
+            seen.add(path)
+            result.append(path)
+    return result
+
+
+def _kd_fetch(url: str) -> str:
+    import httpx
+    time.sleep(0.25)
+    try:
+        with httpx.Client(timeout=20, follow_redirects=True) as c:
+            r = c.get(url, headers=_KD_HEADERS)
+            return r.text if r.status_code == 200 else ""
+    except Exception:
+        return ""
+
+
+def _kd_parse_product(html: str, path: str) -> Optional[dict]:
+    if not html:
+        return None
+
+    # Name: strip site suffix from <title>
+    title_m = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
+    if title_m:
+        title = title_m.group(1).strip()
+        for sep in (" | ", " - ", " – ", " — "):
+            if sep in title:
+                title = title.split(sep)[0].strip()
+                break
+        name = title
+    else:
+        name = path.rstrip("/").split("/")[-1].replace("-", " ").title()
+
+    if not name:
+        return None
+
+    # Numeric product ID from inline JS
+    id_m = re.search(r'var\s+idStock_seleccionado\s*=\s*(\d+)', html)
+    product_id = id_m.group(1) if id_m else None
+
+    # Price
+    price_m = re.search(r'"s_precio"\s*:\s*([\d.]+)', html)
+    price = float(price_m.group(1)) if price_m else None
+
+    # Promo / sale price
+    promo_m = re.search(r'"precio_oferta"\s*:\s*([\d.]+)', html)
+    promo = float(promo_m.group(1)) if promo_m else None
+    if promo == 0.0:
+        promo = None
+
+    # CDN product images
+    images = list(dict.fromkeys(re.findall(
+        r'https://d22fxaf9t8d39k\.cloudfront\.net/[a-zA-Z0-9]+\.(?:webp|jpg|jpeg|png)',
+        html,
+    )))
+
+    parts = path.lstrip("/").rstrip("/").split("/")
+    category = parts[0] if parts else "otros"
+    sku = product_id if product_id else "/".join(parts)
+
+    return {
+        "nombre": name,
+        "sku": sku,
+        "categoria": category,
+        "precio_minorista": price,
+        "precio_promo": promo,
+        "imagen_url": images[0] if images else None,
+        "imagenes_extra": images[1:] if len(images) > 1 else None,
+        "activo": True,
+        "destacado": False,
+    }
+
+
+def _run_kairosdis_scraper() -> None:
+    global _kairosdis_job
+    _kairosdis_job = {
+        "status": "Iniciando...", "progress": 0, "total": 0,
+        "new": 0, "updated": 0, "errors": [],
+    }
+
+    try:
+        # Phase 1: discover main categories from homepage
+        _kairosdis_job["status"] = "Descubriendo categorías..."
+        home_html = _kd_fetch(_KAIROSDIS_BASE)
+        home_links = _kd_extract_links(home_html)
+
+        category_paths = [l for l in home_links if l.count("/") == 1]
+        if not category_paths:
+            category_paths = _KAIROSDIS_FALLBACK_CATEGORIES
+
+        product_paths: set = set(l for l in home_links if l.count("/") >= 3)
+
+        # Phase 2: crawl each category page → collect subcategories + products
+        _kairosdis_job["status"] = f"Explorando {len(category_paths)} categorías..."
+
+        def crawl_cat(cat_path: str):
+            html = _kd_fetch(_KAIROSDIS_BASE + cat_path)
+            links = _kd_extract_links(html)
+            subcats = [l for l in links if l.count("/") == 2]
+            prods = [l for l in links if l.count("/") >= 3]
+            return subcats, prods
+
+        subcategory_paths: set = set()
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for subcats, prods in ex.map(crawl_cat, category_paths):
+                subcategory_paths.update(subcats)
+                product_paths.update(prods)
+
+        # Phase 3: crawl subcategory pages → more products
+        _kairosdis_job["status"] = f"Explorando {len(subcategory_paths)} subcategorías..."
+
+        def crawl_sub(sub_path: str):
+            html = _kd_fetch(_KAIROSDIS_BASE + sub_path)
+            links = _kd_extract_links(html)
+            return [l for l in links if l.count("/") >= 3]
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for prods in ex.map(crawl_sub, subcategory_paths):
+                product_paths.update(prods)
+
+        # Phase 4: scrape each product detail page
+        product_list = list(product_paths)
+        _kairosdis_job["total"] = len(product_list)
+        _kairosdis_job["status"] = f"Scrapeando {len(product_list)} productos..."
+
+        existing = db.select("products", select_cols="id,sku")
+        existing_skus: dict = {p["sku"]: p["id"] for p in existing if p.get("sku")}
+
+        def scrape_one(path: str):
+            html = _kd_fetch(_KAIROSDIS_BASE + path)
+            return _kd_parse_product(html, path)
+
+        processed = 0
+        now = datetime.utcnow().isoformat()
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(scrape_one, p): p for p in product_list}
+            for f in as_completed(futures):
+                processed += 1
+                _kairosdis_job["progress"] = int(processed / max(len(product_list), 1) * 100)
+                try:
+                    data = f.result()
+                    if data is None:
+                        continue
+                    sku = data.get("sku")
+                    if sku and sku in existing_skus:
+                        data["updated_at"] = now
+                        db.update("products", existing_skus[sku], data)
+                        _kairosdis_job["updated"] += 1
+                    else:
+                        data["created_at"] = now
+                        data["updated_at"] = now
+                        inserted = db.insert("products", data)
+                        _kairosdis_job["new"] += 1
+                        if sku and isinstance(inserted, dict) and inserted.get("id"):
+                            existing_skus[sku] = inserted["id"]
+                except Exception as e:
+                    _kairosdis_job["errors"].append(str(e)[:120])
+
+        _kairosdis_job["status"] = "completed"
+        _kairosdis_job["progress"] = 100
+
+    except Exception as e:
+        _kairosdis_job["status"] = "error"
+        _kairosdis_job["errors"].append(str(e)[:200])
+
+
+@router.post("/scrape-kairosdis")
+def start_kairosdis_scraper(background_tasks: BackgroundTasks):
+    if _kairosdis_job.get("status") not in ("idle", "completed", "error"):
+        raise HTTPException(status_code=409, detail="Scraper ya en ejecución")
+    background_tasks.add_task(_run_kairosdis_scraper)
+    return {"status": "started", "message": "Importando desde kairosdis.com.ar en segundo plano"}
+
+
+@router.get("/scrape-kairosdis/status")
+def kairosdis_scraper_status():
+    return _kairosdis_job
