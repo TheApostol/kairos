@@ -12,11 +12,11 @@
       "static/chunks/fd9d1056-7a1bb63d1f317993.js",
       "static/chunks/23-ba69702ac001ddce.js",
       "static/chunks/main-app-acbef76fcca84a01.js",
-      "static/css/4664cb878733ce0f.css",
+      "static/css/9d89cb964b93de15.css",
       "static/chunks/502-0ebee56c234bef5b.js",
       "static/chunks/439-588845daea7e3311.js",
       "static/chunks/697-c859591075ec54b9.js",
-      "static/chunks/app/layout-4e7f3ebe37dc4226.js"
+      "static/chunks/app/layout-14bfa9d102716f4a.js"
     ],
     "/campaigns/[id]/page": [
       "static/chunks/webpack-e26ca52b2800bf41.js",
@@ -27,17 +27,6 @@
       "static/chunks/600-46a88d1adca9cd84.js",
       "static/chunks/124-6a0bc197f79ac13d.js",
       "static/chunks/app/campaigns/[id]/page-1e0f7cba62c6941c.js"
-    ],
-    "/campaigns/page": [
-      "static/chunks/webpack-e26ca52b2800bf41.js",
-      "static/chunks/fd9d1056-7a1bb63d1f317993.js",
-      "static/chunks/23-ba69702ac001ddce.js",
-      "static/chunks/main-app-acbef76fcca84a01.js",
-      "static/chunks/502-0ebee56c234bef5b.js",
-      "static/chunks/934-a4e1f7ff83475beb.js",
-      "static/chunks/600-46a88d1adca9cd84.js",
-      "static/chunks/374-1ec99d96be5c075b.js",
-      "static/chunks/app/campaigns/page-cf69cfc89524416a.js"
     ],
     "/campaigns/new/page": [
       "static/chunks/webpack-e26ca52b2800bf41.js",
@@ -61,6 +50,17 @@
       "static/chunks/374-1ec99d96be5c075b.js",
       "static/chunks/1-0b317fe7fc209175.js",
       "static/chunks/app/catalog/page-314cb8e76d64501c.js"
+    ],
+    "/campaigns/page": [
+      "static/chunks/webpack-e26ca52b2800bf41.js",
+      "static/chunks/fd9d1056-7a1bb63d1f317993.js",
+      "static/chunks/23-ba69702ac001ddce.js",
+      "static/chunks/main-app-acbef76fcca84a01.js",
+      "static/chunks/502-0ebee56c234bef5b.js",
+      "static/chunks/934-a4e1f7ff83475beb.js",
+      "static/chunks/600-46a88d1adca9cd84.js",
+      "static/chunks/374-1ec99d96be5c075b.js",
+      "static/chunks/app/campaigns/page-cf69cfc89524416a.js"
     ],
     "/leads/[id]/page": [
       "static/chunks/webpack-e26ca52b2800bf41.js",
