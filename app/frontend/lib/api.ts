@@ -67,14 +67,7 @@ export async function createCampaign(data: Record<string, unknown>) {
   })
 }
 
-export async function generateCampaignText(data: {
-  tipo: string
-  segmento_desc: string
-  producto_destacado?: string
-  empresa?: string
-  ciudad?: string
-  rubro?: string
-}) {
+export async function generateCampaignText(data: Record<string, unknown>) {
   return apiFetch('/campaigns/generate-text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

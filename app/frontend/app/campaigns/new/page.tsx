@@ -81,14 +81,13 @@ export default function NewCampaignPage() {
   const handleGenerateAI = async () => {
     setGeneratingAI(true)
     try {
+      const segDesc = [
+        segRubro !== 'all' ? segRubro : 'tiendas holísticas y de sahumerios',
+        segProvincia !== 'all' ? `en ${segProvincia}` : 'en Argentina',
+      ].join(' ')
       const result = await generateCampaignText({
-        nombre,
         tipo,
-        segmento: {
-          provincia: segProvincia !== 'all' ? segProvincia : undefined,
-          rubro: segRubro !== 'all' ? segRubro : undefined,
-          estado: segEstado !== 'all' ? segEstado : undefined,
-        },
+        segmento_desc: segDesc,
       })
       if (result.asunto) setAsunto(result.asunto)
       if (result.cuerpo) setCuerpo(result.cuerpo)
