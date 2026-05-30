@@ -1,5 +1,5 @@
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -375,7 +375,7 @@ def list_products(
 
 @router.post("")
 def create_product(body: ProductCreate):
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     data = body.model_dump()
     data["created_at"] = now
     data["updated_at"] = now
@@ -385,17 +385,46 @@ def create_product(body: ProductCreate):
 
 @router.put("/{product_id}")
 def update_product(product_id: str, body: ProductUpdate):
-    products = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
-    if not products:
+    existing = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
+    if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
 
     update_data = body.model_dump(exclude_none=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    update_data["updated_at"] = datetime.utcnow().isoformat()
-    updated = db.update("products", product_id, update_data)
-    return updated
+    # Track price changes
+    prev = existing[0]
+    price_changed = (
+        (body.precio_minorista is not None and body.precio_minorista != prev.get("precio_minorista"))
+        or (body.precio_mayorista is not None and body.precio_mayorista != prev.get("precio_mayorista"))
+    )
+    if price_changed:
+        try:
+            db.insert("product_price_history", {
+                "product_id": product_id,
+                "precio_minorista": body.precio_minorista if body.precio_minorista is not None else prev.get("precio_minorista"),
+                "precio_mayorista": body.precio_mayorista if body.precio_mayorista is not None else prev.get("precio_mayorista"),
+                "changed_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
+
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    db.update("products", product_id, update_data)
+    updated = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
+    return updated[0] if updated else {}
+
+
+@router.get("/{product_id}/price-history")
+def get_price_history(product_id: str):
+    history = db.raw_select("product_price_history", {
+        "select": "precio_minorista,precio_mayorista,changed_at",
+        "product_id": f"eq.{product_id}",
+        "order": "changed_at.desc",
+        "limit": "10",
+    })
+    return {"items": history}
 
 
 @router.delete("/{product_id}")
@@ -406,7 +435,7 @@ def delete_product(product_id: str):
 
     db.update("products", product_id, {
         "activo": False,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"message": "Product deactivated", "id": product_id}
 
@@ -470,7 +499,7 @@ def export_catalog(body: CatalogExportRequest):
         "nombre": body.titulo,
         "tipo": "pdf",
         "productos": [p.get("id") for p in products],
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
     return StreamingResponse(

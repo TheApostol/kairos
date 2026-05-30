@@ -195,6 +195,10 @@ export async function updateProduct(id: string | number, data: Record<string, un
   })
 }
 
+export async function getProductPriceHistory(id: string | number) {
+  return apiFetch(`/products/${id}/price-history`)
+}
+
 // Scraper
 export async function getScraperHistory() {
   return apiFetch('/scraper/history')

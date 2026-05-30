@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { getProducts, createProduct, updateProduct, getApiUrl, sendCatalogueToClients } from '@/lib/api'
+import { getProducts, createProduct, updateProduct, getApiUrl, sendCatalogueToClients, getProductPriceHistory } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +23,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users } from 'lucide-react'
+import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, ChevronDown, ChevronUp } from 'lucide-react'
+import { format } from 'date-fns'
+import { es } from 'date-fns/locale'
 
 interface Product {
   id: number
@@ -133,6 +135,11 @@ export default function CatalogPage() {
   const [notifying, setNotifying] = useState(false)
   const [notifyResult, setNotifyResult] = useState('')
 
+  // Price history
+  const [priceHistory, setPriceHistory] = useState<Array<{ precio_minorista?: number; precio_mayorista?: number; changed_at: string }>>([])
+  const [showPriceHistory, setShowPriceHistory] = useState(false)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+
   // PDF Export dialog
   const [showPdfDialog, setShowPdfDialog] = useState(false)
   const [pdfTitle, setPdfTitle] = useState('Catálogo Kairos')
@@ -158,6 +165,8 @@ export default function CatalogPage() {
 
   const openEditDialog = (product: Product) => {
     setEditingProduct(product)
+    setPriceHistory([])
+    setShowPriceHistory(false)
     setForm({
       nombre: product.nombre,
       descripcion: product.descripcion ?? '',
@@ -491,6 +500,52 @@ export default function CatalogPage() {
                 <Label htmlFor="destacado">Destacado</Label>
               </div>
             </div>
+
+            {editingProduct && (
+              <div className="border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 transition-colors"
+                  onClick={async () => {
+                    if (!showPriceHistory && priceHistory.length === 0) {
+                      setLoadingHistory(true)
+                      try {
+                        const data = await getProductPriceHistory(editingProduct.id)
+                        setPriceHistory(data.items ?? [])
+                      } catch {}
+                      finally { setLoadingHistory(false) }
+                    }
+                    setShowPriceHistory((v) => !v)
+                  }}
+                >
+                  <span>Historial de precios</span>
+                  {loadingHistory ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                  ) : showPriceHistory ? (
+                    <ChevronUp className="w-4 h-4 text-slate-400" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-slate-400" />
+                  )}
+                </button>
+                {showPriceHistory && (
+                  <div className="px-3 pb-3 pt-2 space-y-1.5">
+                    {priceHistory.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-2">Sin cambios registrados</p>
+                    ) : priceHistory.map((h, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs text-slate-600 py-1 border-b last:border-0">
+                        <span className="text-slate-400">
+                          {format(new Date(h.changed_at), "d MMM yyyy, HH:mm", { locale: es })}
+                        </span>
+                        <div className="flex gap-4">
+                          <span>Min: <strong>{formatCurrency(h.precio_minorista)}</strong></span>
+                          <span>May: <strong>{formatCurrency(h.precio_mayorista)}</strong></span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancelar</Button>

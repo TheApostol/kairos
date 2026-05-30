@@ -543,6 +543,11 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
             detail="Google API key required. Pass google_api_key in the request body or set GOOGLE_API_KEY env var.",
         )
 
+    # Prevent duplicate concurrent jobs
+    active = db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
+    if active:
+        raise HTTPException(status_code=409, detail="Ya hay un job corriendo. Esperá a que termine antes de iniciar otro.")
+
     tipo_cliente = body.tipo_cliente or "lead"
     if body.queries:
         queries = body.queries
@@ -625,6 +630,9 @@ def get_history():
             "total_encontrados": job.get("total_found"),
             "nuevos_agregados": job.get("new_found"),
             "error": job.get("error_msg"),
+            "progress": job.get("progress", 0),
+            "total": job.get("total", 0),
+            "tipo": "enrichment" if job.get("queries") == ["enrichment"] else "scraper",
         }
         for job in jobs
     ]
@@ -666,6 +674,11 @@ async def stream_latest_progress():
 
 @router.post("/enrich")
 def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks):
+    # Prevent duplicate concurrent jobs
+    active = db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
+    if active:
+        raise HTTPException(status_code=409, detail="Ya hay un job corriendo. Esperá a que termine antes de iniciar otro.")
+
     job = db.insert("scraper_jobs", {
         "status": "pending",
         "queries": ["enrichment"],
