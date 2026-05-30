@@ -1,8 +1,8 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
   "/campaigns/[id]/page": "app/campaigns/[id]/page.js",
-  "/campaigns/new/page": "app/campaigns/new/page.js",
   "/campaigns/page": "app/campaigns/page.js",
+  "/campaigns/new/page": "app/campaigns/new/page.js",
   "/catalog/page": "app/catalog/page.js",
   "/leads/[id]/page": "app/leads/[id]/page.js",
   "/leads/page": "app/leads/page.js",
