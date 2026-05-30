@@ -208,6 +208,19 @@ export async function getKairosdisScraperStatus() {
   return apiFetch('/products/scrape-kairosdis/status')
 }
 
+// Google Sheets Sync
+export async function syncFromGoogleSheet(sheetId: string) {
+  return apiFetch('/products/sync-from-sheet', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sheet_id: sheetId }),
+  })
+}
+
+export function getProductsCsvUrl() {
+  return getApiUrl('/products/export-csv')
+}
+
 // Scraper
 export async function getScraperHistory() {
   return apiFetch('/scraper/history')

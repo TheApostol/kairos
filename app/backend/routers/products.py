@@ -738,3 +738,126 @@ def start_kairosdis_scraper(background_tasks: BackgroundTasks):
 @router.get("/scrape-kairosdis/status")
 def kairosdis_scraper_status():
     return _kairosdis_job
+
+
+# ─────────────────────────────────────────────
+# GOOGLE SHEETS SYNC
+# ─────────────────────────────────────────────
+
+SHEET_COLUMNS = ["id", "sku", "nombre", "categoria", "precio_minorista",
+                 "precio_mayorista", "precio_promo", "stock", "activo"]
+
+_SHEET_ID_KEY = "google_sheet_id"
+_sheet_id_store: dict = {"id": ""}
+
+
+@router.get("/export-csv")
+def export_products_csv():
+    """Export all products as CSV for import into Google Sheets."""
+    import csv as _csv
+    products = db.select_all("products", select_cols=",".join(SHEET_COLUMNS))
+    output = io.StringIO()
+    writer = _csv.writer(output)
+    writer.writerow(["ID", "SKU", "Nombre", "Categoría", "Precio Minorista",
+                     "Precio Mayorista", "Precio Promo", "Stock", "Activo"])
+    for p in products:
+        writer.writerow([
+            p.get("id", ""),
+            p.get("sku", ""),
+            p.get("nombre", ""),
+            (p.get("categoria") or "").replace("-", " ").title(),
+            p.get("precio_minorista", ""),
+            p.get("precio_mayorista", ""),
+            p.get("precio_promo", ""),
+            p.get("stock", ""),
+            "Sí" if p.get("activo") is not False else "No",
+        ])
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=kairos_productos.csv"},
+    )
+
+
+class SheetSyncRequest(BaseModel):
+    sheet_id: str
+
+
+@router.post("/sync-from-sheet")
+def sync_from_google_sheet(body: SheetSyncRequest):
+    """
+    Read a Google Sheet (must be shared as 'Anyone with the link can view')
+    and update prices, stock, and activo status in the CRM for matching SKUs.
+
+    The sheet must have columns: ID, SKU, Nombre, Precio Minorista,
+    Precio Mayorista, Precio Promo, Stock, Activo
+    """
+    import csv as _csv
+    import httpx as _httpx
+
+    sheet_id = body.sheet_id.strip()
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&id={sheet_id}"
+
+    try:
+        resp = _httpx.get(csv_url, follow_redirects=True, timeout=30)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"No se pudo leer la hoja: {exc}")
+
+    content = resp.text
+    reader = _csv.DictReader(io.StringIO(content))
+
+    updated = 0
+    skipped = 0
+    errors = []
+
+    for row in reader:
+        product_id = (row.get("ID") or "").strip()
+        if not product_id:
+            skipped += 1
+            continue
+
+        update_data: dict = {}
+
+        for src_col, db_col in [
+            ("Precio Minorista", "precio_minorista"),
+            ("Precio Mayorista", "precio_mayorista"),
+            ("Precio Promo", "precio_promo"),
+        ]:
+            val = (row.get(src_col) or "").strip()
+            if val:
+                try:
+                    update_data[db_col] = float(val.replace(",", "."))
+                except ValueError:
+                    pass
+
+        stock_str = (row.get("Stock") or "").strip()
+        if stock_str:
+            try:
+                update_data["stock"] = int(float(stock_str))
+            except ValueError:
+                pass
+
+        activo_str = (row.get("Activo") or "").strip().lower()
+        if activo_str in ("sí", "si", "yes", "true", "1"):
+            update_data["activo"] = True
+        elif activo_str in ("no", "false", "0"):
+            update_data["activo"] = False
+
+        if not update_data:
+            skipped += 1
+            continue
+
+        update_data["updated_at"] = datetime.utcnow().isoformat()
+        try:
+            db.update("products", product_id, update_data)
+            updated += 1
+        except Exception as exc:
+            errors.append(f"{product_id}: {exc}")
+
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors[:10],
+    }

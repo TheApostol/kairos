@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { getProducts, getProductCategories, createProduct, updateProduct, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus } from '@/lib/api'
+import { getProducts, getProductCategories, createProduct, updateProduct, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, getProductsCsvUrl } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw } from 'lucide-react'
 
 const PER_PAGE = 24
 
@@ -152,6 +152,11 @@ export default function CatalogPage() {
   const [selectedForPdf, setSelectedForPdf] = useState<Set<number>>(new Set())
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [pdfError, setPdfError] = useState('')
+
+  // Google Sheets sync
+  const SHEET_ID = '1QSynaIHWtcXiKcG-YuqAy2p8oRlOW5Bh5Qj3P0zGJA'
+  const [sheetSyncing, setSheetSyncing] = useState(false)
+  const [sheetSyncResult, setSheetSyncResult] = useState('')
 
   // Load category list once
   useEffect(() => {
@@ -353,6 +358,36 @@ export default function CatalogPage() {
                 : 'Iniciando...'
               : 'Importar Kairosdis'}
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => window.open(getProductsCsvUrl(), '_blank')}
+            className="gap-2"
+          >
+            <Sheet className="w-4 h-4" />
+            Exportar CSV
+          </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              setSheetSyncing(true)
+              setSheetSyncResult('')
+              try {
+                const r = await syncFromGoogleSheet(SHEET_ID)
+                setSheetSyncResult(`✓ ${r.updated} actualizados, ${r.skipped} sin cambios${r.errors?.length ? `, ${r.errors.length} errores` : ''}`)
+                setProductRefresh((n) => n + 1)
+              } catch (e: unknown) {
+                setSheetSyncResult(`Error: ${e instanceof Error ? e.message : 'Error al sincronizar'}`)
+              } finally {
+                setSheetSyncing(false)
+                setTimeout(() => setSheetSyncResult(''), 6000)
+              }
+            }}
+            disabled={sheetSyncing}
+            className="gap-2"
+          >
+            {sheetSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {sheetSyncing ? 'Sincronizando...' : 'Sync desde Sheet'}
+          </Button>
           <Button onClick={openAddDialog} className="gap-2">
             <Plus className="w-4 h-4" />
             Agregar Producto
@@ -371,6 +406,11 @@ export default function CatalogPage() {
           {scrapeJob.status === 'completed'
             ? `✓ Kairosdis importado: ${scrapeJob.new} nuevos, ${scrapeJob.updated} actualizados de ${scrapeJob.total} productos`
             : `✗ Error al importar Kairosdis${scrapeJob.errors[0] ? ': ' + scrapeJob.errors[0] : ''}`}
+        </p>
+      )}
+      {sheetSyncResult && (
+        <p className={`text-sm font-medium -mt-3 ${sheetSyncResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
+          {sheetSyncResult}
         </p>
       )}
 
