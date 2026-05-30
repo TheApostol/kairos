@@ -94,6 +94,7 @@ export default function OrderDetailPage() {
   const [descuento, setDescuento] = useState(0)
   const [fechaEntrega, setFechaEntrega] = useState('')
   const [hasChanges, setHasChanges] = useState(false)
+  const [downloadingInvoice, setDownloadingInvoice] = useState(false)
 
   useEffect(() => {
     Promise.all([getOrder(id), getProducts()])
@@ -206,11 +207,31 @@ export default function OrderDetailPage() {
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={() => window.open(getOrderInvoiceUrl(id), '_blank')}
+            disabled={downloadingInvoice}
+            onClick={async () => {
+              setDownloadingInvoice(true)
+              try {
+                const res = await fetch(getOrderInvoiceUrl(id))
+                if (!res.ok) throw new Error(await res.text())
+                const blob = await res.blob()
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `factura_${order.numero}_${new Date().toISOString().slice(0,10)}.pdf`
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                URL.revokeObjectURL(url)
+              } catch (e) {
+                alert(e instanceof Error ? e.message : 'Error al generar la factura')
+              } finally {
+                setDownloadingInvoice(false)
+              }
+            }}
             className="gap-2"
           >
-            <FileDown className="w-4 h-4" />
-            Factura PDF
+            {downloadingInvoice ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+            {downloadingInvoice ? 'Generando...' : 'Factura PDF'}
           </Button>
           <Button onClick={handleSave} disabled={!hasChanges || saving}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}

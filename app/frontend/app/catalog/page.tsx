@@ -150,6 +150,8 @@ export default function CatalogPage() {
   const [showPdfDialog, setShowPdfDialog] = useState(false)
   const [pdfTitle, setPdfTitle] = useState('Catálogo Kairos')
   const [selectedForPdf, setSelectedForPdf] = useState<Set<number>>(new Set())
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [pdfError, setPdfError] = useState('')
 
   // Load category list once
   useEffect(() => {
@@ -262,14 +264,30 @@ export default function CatalogPage() {
     } catch {}
   }
 
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
+    setDownloadingPdf(true)
+    setPdfError('')
     const ids = Array.from(selectedForPdf)
     const params = new URLSearchParams({ title: pdfTitle })
-    if (ids.length > 0) {
-      ids.forEach((id) => params.append('product_ids', String(id)))
+    if (ids.length > 0) ids.forEach((id) => params.append('product_ids', String(id)))
+    try {
+      const res = await fetch(`${getApiUrl('/products/export-catalog')}?${params.toString()}`)
+      if (!res.ok) throw new Error(await res.text())
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `catalogo_kairos_${new Date().toISOString().slice(0,10)}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setShowPdfDialog(false)
+    } catch (e) {
+      setPdfError(e instanceof Error ? e.message : 'Error al generar el PDF')
+    } finally {
+      setDownloadingPdf(false)
     }
-    window.open(`${getApiUrl('/products/export-catalog')}?${params.toString()}`, '_blank')
-    setShowPdfDialog(false)
   }
 
   const togglePdfProduct = (id: number) => {
@@ -661,11 +679,14 @@ export default function CatalogPage() {
               </div>
             </div>
           </div>
+          {pdfError && (
+            <p className="text-sm text-red-600 px-1">{pdfError}</p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPdfDialog(false)}>Cancelar</Button>
-            <Button onClick={handleExportPdf} disabled={selectedForPdf.size === 0} className="gap-2">
-              <FileDown className="w-4 h-4" />
-              Descargar PDF
+            <Button variant="outline" onClick={() => { setShowPdfDialog(false); setPdfError('') }}>Cancelar</Button>
+            <Button onClick={handleExportPdf} disabled={selectedForPdf.size === 0 || downloadingPdf} className="gap-2">
+              {downloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+              {downloadingPdf ? 'Generando...' : 'Descargar PDF'}
             </Button>
           </DialogFooter>
         </DialogContent>

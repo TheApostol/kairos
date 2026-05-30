@@ -254,18 +254,28 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                     cell_content.append(Paragraph(f"SKU: {sku}", sku_style))
 
                 if incluir_precios:
+                    def _fmt_price(val):
+                        try:
+                            return f"$ {float(val):,.0f}"
+                        except (TypeError, ValueError):
+                            return None
+
                     precio_min = p.get("precio_minorista")
                     precio_may = p.get("precio_mayorista")
                     precio_promo = p.get("precio_promo")
 
-                    if precio_promo:
-                        cell_content.append(Paragraph(f"$ {precio_promo:,.0f}", price_style))
+                    promo_str = _fmt_price(precio_promo)
+                    min_str = _fmt_price(precio_min)
+                    may_str = _fmt_price(precio_may)
+
+                    if promo_str:
+                        cell_content.append(Paragraph(promo_str, price_style))
                         cell_content.append(Paragraph("Precio promocional", price_label_style))
-                    elif precio_min:
-                        cell_content.append(Paragraph(f"$ {precio_min:,.0f}", price_style))
+                    elif min_str:
+                        cell_content.append(Paragraph(min_str, price_style))
                         cell_content.append(Paragraph("Precio minorista", price_label_style))
 
-                    if precio_may and precio_may != precio_min:
+                    if may_str and precio_may != precio_min:
                         may_style = ParagraphStyle(
                             "MayPrice",
                             parent=styles["Normal"],
@@ -273,22 +283,26 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                             fontSize=10,
                             textColor=PRIMARY,
                         )
-                        cell_content.append(Paragraph(f"$ {precio_may:,.0f}", may_style))
+                        cell_content.append(Paragraph(may_str, may_style))
                         cell_content.append(Paragraph("Precio mayorista", price_label_style))
 
                 stock = p.get("stock")
                 if stock is not None:
-                    stock_color = ACCENT if stock <= 5 else HexColor("#27ae60")
-                    stock_text = f"Stock: {stock} unidades" if stock > 0 else "Sin stock"
-                    stock_style = ParagraphStyle(
-                        "Stock",
-                        parent=styles["Normal"],
-                        fontName="Helvetica",
-                        fontSize=7,
-                        textColor=stock_color,
-                    )
-                    cell_content.append(Spacer(1, 0.1 * cm))
-                    cell_content.append(Paragraph(stock_text, stock_style))
+                    try:
+                        stock_int = int(stock)
+                        stock_color = ACCENT if stock_int <= 5 else HexColor("#27ae60")
+                        stock_text = f"Stock: {stock_int} unidades" if stock_int > 0 else "Sin stock"
+                        stock_style = ParagraphStyle(
+                            "Stock",
+                            parent=styles["Normal"],
+                            fontName="Helvetica",
+                            fontSize=7,
+                            textColor=stock_color,
+                        )
+                        cell_content.append(Spacer(1, 0.1 * cm))
+                        cell_content.append(Paragraph(stock_text, stock_style))
+                    except (TypeError, ValueError):
+                        pass
 
                 row_cells.append(cell_content)
 
@@ -309,7 +323,7 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                 ("BACKGROUND", (0, 0), (-1, -1), LIGHT_GRAY),
                 ("ROWBACKGROUNDS", (0, 0), (-1, -1), [LIGHT_GRAY, white]),
                 ("GRID", (0, 0), (-1, -1), 0.5, HexColor("#e0e0e0")),
-                ("ROUNDEDCORNERS", [4]),
+                ("ROUNDEDCORNERS", [4, 4, 4, 4]),
             ]))
             story.append(product_table)
 
