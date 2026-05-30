@@ -38,4 +38,6 @@ jobs:
           # Add .next to git (force since it's gitignored)
           git add -f app/frontend/.next
           git diff --staged --quiet || git commit -m "chore: auto-build frontend [skip ci]"
+          # Pull rebase to handle concurrent pushes, then push
+          git pull --rebase origin main
           git push
