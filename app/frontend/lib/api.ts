@@ -175,6 +175,10 @@ export async function getProducts(params?: Record<string, string>) {
   return apiFetch(`/products${query}`)
 }
 
+export async function getProductCategories() {
+  return apiFetch('/products/categories')
+}
+
 export async function getProduct(id: string | number) {
   return apiFetch(`/products/${id}`)
 }
