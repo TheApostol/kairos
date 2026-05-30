@@ -52,16 +52,16 @@ export default function Sidebar({ onClose }: SidebarProps) {
     >
       {/* Logo */}
       <div
-        className="flex items-center justify-between px-5 py-4 border-b"
+        className="flex items-center justify-between px-5 py-5 border-b"
         style={{ borderColor: '#3D2B1F' }}
       >
         <Image
           src="/logo.svg"
           alt="Kairos Distribuidora"
-          width={160}
-          height={48}
+          width={200}
+          height={64}
           priority
-          className="h-10 w-auto"
+          className="h-14 w-auto"
         />
         {onClose && (
           <button
