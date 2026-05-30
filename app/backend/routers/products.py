@@ -492,12 +492,15 @@ def export_catalog(body: CatalogExportRequest):
 _KAIROSDIS_BASE = "https://www.kairosdis.com.ar"
 _KD_CDN = "https://d22fxaf9t8d39k.cloudfront.net/"
 
-# Known main-category URLs — used as fallback if homepage nav parse fails
+# Correct root-category URLs (verified from homepage JS — used if dynamic parse fails)
 _KAIROSDIS_FALLBACK_CATEGORIES = [
-    "/sahumerios", "/velas", "/dijes", "/kits-y-promociones",
-    "/difusores-y-quemadores", "/fuentes-de-agua",
-    "/decoracion", "/tarot-y-libros", "/imagenes-religiosas",
-    "/fluidos-esotericos",
+    "/sahumerios", "/kits", "/velas", "/promos",
+    "/hornillos-y-sahumadores", "/cascadas-de-humo", "/lamparas-de-sal",
+    "/fuentes-de-agua", "/productos-aromaticos", "/portasahumerios",
+    "/home-y-deco", "/defumacion", "/imagenes-gigantes-de-resina",
+    "/tarot-libros", "/linea-santoral", "/yoga-y-relajacion",
+    "/religion-y-ofrenda", "/bijou-llaveros", "/runas-pendulos-radiestesia",
+    "/dijes", "/fluidos-esotericos", "/linea-vrinda", "/humificadores",
 ]
 
 _KD_HEADERS = {
@@ -510,13 +513,6 @@ _KD_HEADERS = {
     "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
 }
 
-_KD_SKIP = {
-    "/carrito", "/cart", "/cuenta", "/account", "/login", "/ingresa",
-    "/checkout", "/buscar", "/search", "/contacto", "/newsletter",
-    "/quienes-somos", "/sobre-nosotros", "/envios", "/terminos",
-    "/privacidad", "/mapa-del-sitio",
-}
-
 _kairosdis_job: dict = {
     "status": "idle", "progress": 0, "total": 0,
     "new": 0, "updated": 0, "errors": [],
@@ -524,20 +520,27 @@ _kairosdis_job: dict = {
 
 
 def _kd_discover_categories() -> list:
-    """Fetch homepage and extract 1-segment category paths from nav links."""
-    import httpx
+    """
+    Parse all root categories from the JSON blobs embedded in the homepage.
+    Each category is serialised as {idCategorias:…, c_nombre:…, c_link_full:…, c_padre:null, …}.
+    We extract those with c_padre == null (root categories).
+    """
+    import httpx, json as _json
     try:
         with httpx.Client(timeout=20, follow_redirects=True) as c:
-            resp = c.get(_KAIROSDIS_BASE, headers=_KD_HEADERS)
-        links = set()
-        for href in re.findall(r'href=["\']([^"\']+)["\']', resp.text):
-            path = href.strip().rstrip("/")
-            if (path.startswith("/") and path.count("/") == 1
-                    and re.match(r'^/[a-zA-Z]', path)
-                    and not re.search(r'\.\w+$', path)
-                    and path not in _KD_SKIP):
-                links.add(path)
-        return list(links)
+            html = c.get(_KAIROSDIS_BASE, headers=_KD_HEADERS).text
+
+        # Every category object contains "c_nombre" — extract all JSON objects that do
+        blobs = re.findall(r'\{[^{}]*"c_nombre"[^{}]*\}', html)
+        paths = []
+        for blob in blobs:
+            try:
+                obj = _json.loads(blob.replace(r'\/', '/'))
+                if obj.get("c_padre") is None and obj.get("c_link_full"):
+                    paths.append(obj["c_link_full"])
+            except Exception:
+                pass
+        return paths
     except Exception:
         return []
 
