@@ -81,6 +81,8 @@ export default function ScraperPage() {
   const [enrichStartedAt, setEnrichStartedAt] = useState<Date | null>(null)
   const enrichIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  const [scraperJobId, setScraperJobId] = useState<string | null>(null)
+  const [enrichJobId, setEnrichJobId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cancellingId, setCancellingId] = useState<number | null>(null)
 
@@ -131,15 +133,26 @@ export default function ScraperPage() {
   const isEnrichRunning = enrichState === 'running'
   const anyJobRunning = isScraperRunning || isEnrichRunning
 
+  const stopCurrentJob = async (jobId: string | null, onDone: () => void) => {
+    if (!jobId) return
+    try {
+      await cancelScraperJob(jobId)
+      onDone()
+      await fetchHistory()
+    } catch {}
+  }
+
   const startScraper = async () => {
     setScraperState('running')
     setScraperError('')
+    setScraperJobId(null)
     setProgress(0)
     setCurrentQuery('')
     setLogLines(['Iniciando scraper...'])
 
     try {
-      await runScraper()
+      const res = await runScraper()
+      if (res?.job_id) setScraperJobId(String(res.job_id))
 
       const es = new EventSource(getApiUrl('/scraper/progress'))
       eventSourceRef.current = es
@@ -196,6 +209,7 @@ export default function ScraperPage() {
     try {
       const res = await runEnrichment()
       const jobId = res?.job_id
+      if (jobId) setEnrichJobId(String(jobId))
 
       // Poll job status every 4s for live progress
       if (enrichIntervalRef.current) clearInterval(enrichIntervalRef.current)
@@ -285,6 +299,17 @@ export default function ScraperPage() {
               >
                 {isScraperRunning ? <><Loader2 className="w-5 h-5 animate-spin" />Corriendo...</> : <><Play className="w-5 h-5" />Ejecutar Scraper</>}
               </Button>
+              {isScraperRunning && scraperJobId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-red-300 text-red-600 hover:bg-red-50 gap-2"
+                  onClick={() => stopCurrentJob(scraperJobId, () => { setScraperState('idle'); setScraperJobId(null); eventSourceRef.current?.close() })}
+                >
+                  <StopCircle className="w-4 h-4" />
+                  Detener scraper
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -323,6 +348,17 @@ export default function ScraperPage() {
               >
                 {isEnrichRunning ? <><Loader2 className="w-5 h-5 animate-spin" />Enriqueciendo...</> : <><RefreshCw className="w-5 h-5" />Enriquecer Leads</>}
               </Button>
+              {isEnrichRunning && enrichJobId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-red-300 text-red-600 hover:bg-red-50 gap-2"
+                  onClick={() => stopCurrentJob(enrichJobId, () => { setEnrichState('idle'); setEnrichJobId(null); if (enrichIntervalRef.current) { clearInterval(enrichIntervalRef.current); enrichIntervalRef.current = null } })}
+                >
+                  <StopCircle className="w-4 h-4" />
+                  Detener enriquecimiento
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

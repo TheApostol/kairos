@@ -207,24 +207,55 @@ def _is_valid_email(email: str) -> bool:
 
 def _extract_from_soup(soup, result: dict) -> None:
     """Extract contact info using BeautifulSoup from parsed HTML."""
-    from bs4 import BeautifulSoup  # already imported by caller
 
-    # 1. JSON-LD schema.org — most reliable source
+    # 1. JSON-LD schema.org — most reliable source (handles nested contactPoint too)
     for script in soup.find_all("script", {"type": "application/ld+json"}):
         try:
             data = json.loads(script.string or "")
+            # Handle @graph arrays and plain lists
+            entries = []
             if isinstance(data, list):
-                data = data[0]
-            if not result["email"] and data.get("email"):
-                candidate = str(data["email"]).strip()
-                if _is_valid_email(candidate):
-                    result["email"] = candidate
-            if not result["telefono"] and data.get("telephone"):
-                result["telefono"] = str(data["telephone"]).strip()
+                entries = data
+            elif isinstance(data, dict):
+                entries = data.get("@graph", [data])
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                # direct email/telephone
+                if not result["email"] and entry.get("email"):
+                    c = str(entry["email"]).strip()
+                    if _is_valid_email(c):
+                        result["email"] = c
+                if not result["telefono"] and entry.get("telephone"):
+                    result["telefono"] = str(entry["telephone"]).strip()
+                # nested contactPoint
+                cp = entry.get("contactPoint") or {}
+                if isinstance(cp, list):
+                    cp = cp[0] if cp else {}
+                if not result["email"] and cp.get("email"):
+                    c = str(cp["email"]).strip()
+                    if _is_valid_email(c):
+                        result["email"] = c
+                if not result["telefono"] and cp.get("telephone"):
+                    result["telefono"] = str(cp["telephone"]).strip()
         except Exception:
             pass
 
-    # 2. Microdata: itemprop attributes
+    # 2. <meta> tags (some themes put email in og:email or similar)
+    for meta in soup.find_all("meta"):
+        content = meta.get("content", "")
+        name = (meta.get("name") or meta.get("property") or "").lower()
+        if not result["email"] and ("email" in name or "mail" in name):
+            if content and _is_valid_email(content):
+                result["email"] = content
+        # data-email attribute anywhere
+    for el in soup.find_all(attrs={"data-email": True}):
+        if not result["email"]:
+            c = el["data-email"].strip()
+            if _is_valid_email(c):
+                result["email"] = c
+
+    # 3. Microdata: itemprop attributes
     for el in soup.find_all(itemprop=True):
         prop = el.get("itemprop", "")
         if prop == "email" and not result["email"]:
@@ -236,7 +267,7 @@ def _extract_from_soup(soup, result: dict) -> None:
             if val:
                 result["telefono"] = val.strip()
 
-    # 3. All <a> tags — mailto, tel, instagram, whatsapp
+    # 4. All <a> tags — mailto, tel, instagram, whatsapp
     for a in soup.find_all("a", href=True):
         href = str(a.get("href", ""))
         if "mailto:" in href and not result["email"]:
@@ -244,9 +275,9 @@ def _extract_from_soup(soup, result: dict) -> None:
             if _is_valid_email(candidate):
                 result["email"] = candidate
         if href.startswith("tel:") and not result["telefono"]:
-            raw = href[4:].strip().replace(" ", "").replace("-", "")
+            raw = href[4:].strip()
             if raw:
-                result["telefono"] = href[4:].strip()
+                result["telefono"] = raw
         if "instagram.com" in href and not result["instagram"]:
             ig = INSTAGRAM_REGEX.search(href)
             if ig and ig.group(1) not in ("p", "reel", "stories", "explore", "accounts"):
@@ -256,21 +287,32 @@ def _extract_from_soup(soup, result: dict) -> None:
             if wa:
                 result["whatsapp"] = wa.group(1)
 
-    # 4. Focus on footer / contact-section text for email if still missing
+    # 5. Priority zones: footer / contact sections
     if not result["email"]:
         priority_zones = (
             soup.find_all("footer")
-            + soup.find_all(class_=re.compile(r"footer|contact|contacto|pie|bottom", re.I))
-            + soup.find_all(id=re.compile(r"footer|contact|contacto|pie|bottom", re.I))
+            + soup.find_all(class_=re.compile(r"footer|contact|contacto|pie|bottom|sidebar", re.I))
+            + soup.find_all(id=re.compile(r"footer|contact|contacto|pie|bottom|sidebar", re.I))
         )
         for zone in priority_zones:
-            emails = EMAIL_REGEX.findall(zone.get_text())
+            emails = EMAIL_REGEX.findall(zone.get_text(" "))
             valid = [e for e in emails if _is_valid_email(e)]
             if valid:
                 result["email"] = valid[0]
                 break
 
-    # 5. Fallback: scan all text for phone if still missing
+    # 6. FULL page text scan — last resort, catches plain-text emails in any element
+    if not result["email"]:
+        full_text = soup.get_text(separator=" ")
+        # Also try deobfuscated forms: "info [at] empresa.com", "info(at)empresa.com"
+        deob = re.sub(r'\s*\[at\]\s*|\s*\(at\)\s*|\s+AT\s+', '@', full_text, flags=re.IGNORECASE)
+        deob = re.sub(r'\s*\[dot\]\s*|\s*\(dot\)\s*', '.', deob, flags=re.IGNORECASE)
+        emails = EMAIL_REGEX.findall(deob)
+        valid = [e for e in emails if _is_valid_email(e)]
+        if valid:
+            result["email"] = valid[0]
+
+    # 7. Phone: scan tel: hrefs then full HTML string
     if not result["telefono"]:
         tel_matches = TEL_HREF_REGEX.findall(str(soup))
         if tel_matches:
@@ -290,26 +332,49 @@ def _scrape_website(url: str) -> dict:
         return result
 
     base_url = url.rstrip("/")
+    # Try contact pages first (more likely to have email), then homepage fallback
     pages_to_try = [
-        base_url,
         base_url + "/contacto",
         base_url + "/contactanos",
         base_url + "/contact",
         base_url + "/sobre-nosotros",
+        base_url + "/nosotros",
+        base_url + "/quienes-somos",
+        base_url + "/pages/contact",       # Shopify
+        base_url + "/pages/contactanos",   # Shopify
+        base_url + "/info",
+        base_url,                          # homepage last — largest, try only if needed
     ]
 
-    MAX_BODY_BYTES = 400_000  # 400KB cap to avoid OOM on Render free tier
+    HEAD_BYTES = 80_000    # first 80KB covers <head> JSON-LD, meta, and nav
+    TAIL_BYTES = 150_000   # last 150KB covers footer where emails live
+    SMALL_PAGE = HEAD_BYTES + TAIL_BYTES   # pages under this → read fully
 
     try:
         with httpx.Client(timeout=12, follow_redirects=True) as client:
             for page_url in pages_to_try:
                 try:
-                    resp = client.get(page_url, headers=_ENRICH_HEADERS)
-                    if resp.status_code != 200:
-                        continue
+                    # Stream response — read up to TAIL_BYTES past SMALL_PAGE limit
+                    raw_chunks: list[bytes] = []
+                    total = 0
+                    with client.stream("GET", page_url, headers=_ENRICH_HEADERS) as resp:
+                        if resp.status_code != 200:
+                            continue
+                        for chunk in resp.iter_bytes(chunk_size=8192):
+                            raw_chunks.append(chunk)
+                            total += len(chunk)
+                            if total >= SMALL_PAGE + TAIL_BYTES:
+                                break  # hard cap ~380KB per page
 
-                    # Read only up to MAX_BODY_BYTES to avoid loading multi-MB pages
-                    raw = resp.content[:MAX_BODY_BYTES]
+                    raw_content = b"".join(raw_chunks)
+
+                    # For large pages keep head + tail so we always catch the footer
+                    if len(raw_content) > SMALL_PAGE:
+                        raw = raw_content[:HEAD_BYTES] + raw_content[-TAIL_BYTES:]
+                    else:
+                        raw = raw_content
+                    del raw_content, raw_chunks
+
                     text = raw.decode("utf-8", errors="replace")
                     del raw
 
