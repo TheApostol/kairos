@@ -35,23 +35,23 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Mobile top bar */}
         <header
-          className="lg:hidden flex items-center gap-3 px-4 py-3 flex-shrink-0 border-b"
+          className="lg:hidden flex items-center gap-4 px-4 py-4 flex-shrink-0 border-b"
           style={{ backgroundColor: '#2C1F16', borderColor: '#3D2B1F' }}
         >
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-1.5 rounded-md flex-shrink-0"
+            className="p-2 rounded-md flex-shrink-0"
             style={{ color: '#FAF7F2' }}
             aria-label="Abrir menú"
           >
-            <Menu className="w-5 h-5" />
+            <Menu className="w-6 h-6" />
           </button>
           <Image
             src="/logo.svg"
             alt="Kairos Distribuidora"
-            width={150}
-            height={45}
-            className="h-8 w-auto"
+            width={180}
+            height={56}
+            className="h-12 w-auto"
             priority
           />
         </header>
