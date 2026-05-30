@@ -1,15 +1,15 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
-  "/campaigns/new/page": "app/campaigns/new/page.js",
   "/campaigns/[id]/page": "app/campaigns/[id]/page.js",
+  "/campaigns/new/page": "app/campaigns/new/page.js",
   "/campaigns/page": "app/campaigns/page.js",
   "/catalog/page": "app/catalog/page.js",
   "/leads/[id]/page": "app/leads/[id]/page.js",
   "/leads/page": "app/leads/page.js",
   "/orders/[id]/page": "app/orders/[id]/page.js",
   "/mayoristas/page": "app/mayoristas/page.js",
-  "/page": "app/page.js",
   "/orders/page": "app/orders/page.js",
+  "/page": "app/page.js",
   "/pipeline/page": "app/pipeline/page.js",
   "/scraper/page": "app/scraper/page.js",
   "/public/catalog/page": "app/public/catalog/page.js"
