@@ -1,7 +1,10 @@
 import io
-from datetime import datetime, timezone
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -375,7 +378,7 @@ def list_products(
 
 @router.post("")
 def create_product(body: ProductCreate):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.utcnow().isoformat()
     data = body.model_dump()
     data["created_at"] = now
     data["updated_at"] = now
@@ -385,46 +388,17 @@ def create_product(body: ProductCreate):
 
 @router.put("/{product_id}")
 def update_product(product_id: str, body: ProductUpdate):
-    existing = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
-    if not existing:
+    products = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
+    if not products:
         raise HTTPException(status_code=404, detail="Product not found")
 
     update_data = body.model_dump(exclude_none=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    # Track price changes
-    prev = existing[0]
-    price_changed = (
-        (body.precio_minorista is not None and body.precio_minorista != prev.get("precio_minorista"))
-        or (body.precio_mayorista is not None and body.precio_mayorista != prev.get("precio_mayorista"))
-    )
-    if price_changed:
-        try:
-            db.insert("product_price_history", {
-                "product_id": product_id,
-                "precio_minorista": body.precio_minorista if body.precio_minorista is not None else prev.get("precio_minorista"),
-                "precio_mayorista": body.precio_mayorista if body.precio_mayorista is not None else prev.get("precio_mayorista"),
-                "changed_at": datetime.now(timezone.utc).isoformat(),
-            })
-        except Exception:
-            pass
-
-    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    db.update("products", product_id, update_data)
-    updated = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
-    return updated[0] if updated else {}
-
-
-@router.get("/{product_id}/price-history")
-def get_price_history(product_id: str):
-    history = db.raw_select("product_price_history", {
-        "select": "precio_minorista,precio_mayorista,changed_at",
-        "product_id": f"eq.{product_id}",
-        "order": "changed_at.desc",
-        "limit": "10",
-    })
-    return {"items": history}
+    update_data["updated_at"] = datetime.utcnow().isoformat()
+    updated = db.update("products", product_id, update_data)
+    return updated
 
 
 @router.delete("/{product_id}")
@@ -435,7 +409,7 @@ def delete_product(product_id: str):
 
     db.update("products", product_id, {
         "activo": False,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
     })
     return {"message": "Product deactivated", "id": product_id}
 
@@ -499,7 +473,7 @@ def export_catalog(body: CatalogExportRequest):
         "nombre": body.titulo,
         "tipo": "pdf",
         "productos": [p.get("id") for p in products],
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.utcnow().isoformat(),
     })
 
     return StreamingResponse(
@@ -507,3 +481,246 @@ def export_catalog(body: CatalogExportRequest):
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ─────────────────────────────────────────────
+# KAIROSDIS.COM.AR PRODUCT SCRAPER
+# Uses the site's internal Empretienda JSON API (/v4/product/category)
+# which returns 12 products per page with full price + image data.
+# ─────────────────────────────────────────────
+
+_KAIROSDIS_BASE = "https://www.kairosdis.com.ar"
+_KD_CDN = "https://d22fxaf9t8d39k.cloudfront.net/"
+
+# Correct root-category URLs (verified from homepage JS — used if dynamic parse fails)
+_KAIROSDIS_FALLBACK_CATEGORIES = [
+    "/sahumerios", "/kits", "/velas", "/promos",
+    "/hornillos-y-sahumadores", "/cascadas-de-humo", "/lamparas-de-sal",
+    "/fuentes-de-agua", "/productos-aromaticos", "/portasahumerios",
+    "/home-y-deco", "/defumacion", "/imagenes-gigantes-de-resina",
+    "/tarot-libros", "/linea-santoral", "/yoga-y-relajacion",
+    "/religion-y-ofrenda", "/bijou-llaveros", "/runas-pendulos-radiestesia",
+    "/dijes", "/fluidos-esotericos", "/linea-vrinda", "/humificadores",
+]
+
+_KD_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+}
+
+_kairosdis_job: dict = {
+    "status": "idle", "progress": 0, "total": 0,
+    "new": 0, "updated": 0, "errors": [],
+}
+
+
+def _kd_discover_categories() -> list:
+    """
+    Parse all root categories from the JSON blobs embedded in the homepage.
+    Each category is serialised as {idCategorias:…, c_nombre:…, c_link_full:…, c_padre:null, …}.
+    We extract those with c_padre == null (root categories).
+    """
+    import httpx, json as _json
+    try:
+        with httpx.Client(timeout=20, follow_redirects=True) as c:
+            html = c.get(_KAIROSDIS_BASE, headers=_KD_HEADERS).text
+
+        # Every category object contains "c_nombre" — extract all JSON objects that do
+        blobs = re.findall(r'\{[^{}]*"c_nombre"[^{}]*\}', html)
+        paths = []
+        for blob in blobs:
+            try:
+                obj = _json.loads(blob.replace(r'\/', '/'))
+                if obj.get("c_padre") is None and obj.get("c_link_full"):
+                    paths.append(obj["c_link_full"])
+            except Exception:
+                pass
+        return paths
+    except Exception:
+        return []
+
+
+def _kd_scrape_category(cat_path: str) -> tuple:
+    """
+    Fetch ALL products for a category via the /v4/product/category JSON API.
+    Returns (category_name, [raw_product_dicts]).
+    Each call creates its own httpx session to get a fresh CSRF token.
+    """
+    import httpx
+    cat_name = cat_path.lstrip("/").split("/")[0]
+    products_raw = []
+
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        # Step 1: load the category page to obtain session cookie + CSRF + ids array
+        time.sleep(0.3)
+        resp = client.get(_KAIROSDIS_BASE + cat_path, headers=_KD_HEADERS)
+        if resp.status_code != 200:
+            return cat_name, []
+
+        html = resp.text
+        csrf_m = re.search(r'<meta name="csrf-token" content="([^"]+)"', html)
+        ids_m = re.search(r'var ids = \[([^\]]+)\]', html)
+        if not csrf_m or not ids_m:
+            return cat_name, []
+
+        csrf_token = csrf_m.group(1)
+        ids = [x.strip() for x in ids_m.group(1).split(",")]
+
+        api_headers = {
+            **_KD_HEADERS,
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-TOKEN": csrf_token,
+            "Referer": _KAIROSDIS_BASE + cat_path,
+        }
+
+        # Step 2: paginate — 12 items per page, stop when < 12 returned
+        for page in range(500):  # cap: 500 pages × 12 = 6 000 products max
+            time.sleep(0.25)
+            params = [("filter_page", page), ("filter_order", "2")]
+            for cat_id in ids:
+                params.append(("filter_categories[]", cat_id))
+
+            try:
+                api_resp = client.get(
+                    _KAIROSDIS_BASE + "/v4/product/category",
+                    params=params,
+                    headers=api_headers,
+                )
+                if api_resp.status_code != 200:
+                    break
+                data = api_resp.json().get("data", [])
+            except Exception:
+                break
+
+            if not data:
+                break
+            products_raw.extend(data)
+            if len(data) < 12:
+                break
+
+    return cat_name, products_raw
+
+
+def _kd_map_product(raw: dict, category: str) -> dict:
+    """Map an Empretienda API product dict to our products table schema."""
+    images = [
+        _KD_CDN + img["i_link"]
+        for img in raw.get("imagenes", [])
+        if img.get("i_link")
+    ]
+
+    price = raw.get("p_precio") or None
+    mayorista = raw.get("p_precio_mayorista") or None
+    if mayorista == 0:
+        mayorista = None
+    promo = raw.get("p_precio_oferta") or None
+    if promo == 0:
+        promo = None
+
+    desc = (raw.get("p_descripcion") or "").strip() or None
+
+    return {
+        "nombre": raw["p_nombre"],
+        "sku": str(raw["idProductos"]),
+        "descripcion": desc,
+        "categoria": category,
+        "precio_minorista": price,
+        "precio_mayorista": mayorista,
+        "precio_promo": promo,
+        "imagen_url": images[0] if images else None,
+        "imagenes_extra": images[1:] if len(images) > 1 else None,
+        "activo": not bool(raw.get("p_desactivado", 0)),
+        "destacado": bool(raw.get("p_destacado", 0)),
+    }
+
+
+def _run_kairosdis_scraper() -> None:
+    global _kairosdis_job
+    _kairosdis_job = {
+        "status": "Iniciando...", "progress": 0, "total": 0,
+        "new": 0, "updated": 0, "errors": [],
+    }
+
+    try:
+        # Phase 1: discover category pages
+        _kairosdis_job["status"] = "Descubriendo categorías..."
+        cat_paths = _kd_discover_categories()
+        if len(cat_paths) < 3:
+            cat_paths = _KAIROSDIS_FALLBACK_CATEGORIES
+
+        _kairosdis_job["status"] = f"Cargando {len(cat_paths)} categorías via API..."
+
+        # Phase 2: fetch all products from every category in parallel
+        all_raw: list = []
+        seen_ids: set = set()
+
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = {ex.submit(_kd_scrape_category, p): p for p in cat_paths}
+            done = 0
+            for f in as_completed(futures):
+                done += 1
+                # First half of progress bar covers the API crawl phase
+                _kairosdis_job["progress"] = int(done / len(cat_paths) * 50)
+                try:
+                    cat_name, products_raw = f.result()
+                    for p in products_raw:
+                        pid = str(p.get("idProductos", ""))
+                        if pid and pid not in seen_ids:
+                            seen_ids.add(pid)
+                            p["_cat"] = cat_name
+                            all_raw.append(p)
+                except Exception as e:
+                    _kairosdis_job["errors"].append(str(e)[:120])
+
+        _kairosdis_job["total"] = len(all_raw)
+        _kairosdis_job["status"] = f"Guardando {len(all_raw)} productos..."
+
+        # Phase 3: upsert into products table
+        existing = db.select("products", select_cols="id,sku")
+        existing_skus: dict = {p["sku"]: p["id"] for p in existing if p.get("sku")}
+        now = datetime.utcnow().isoformat()
+
+        for i, raw in enumerate(all_raw):
+            _kairosdis_job["progress"] = 50 + int(i / max(len(all_raw), 1) * 50)
+            try:
+                data = _kd_map_product(raw, raw.pop("_cat", "otros"))
+                sku = data.get("sku")
+                if sku and sku in existing_skus:
+                    data["updated_at"] = now
+                    db.update("products", existing_skus[sku], data)
+                    _kairosdis_job["updated"] += 1
+                else:
+                    data["created_at"] = now
+                    data["updated_at"] = now
+                    inserted = db.insert("products", data)
+                    _kairosdis_job["new"] += 1
+                    if sku and isinstance(inserted, dict) and inserted.get("id"):
+                        existing_skus[sku] = inserted["id"]
+            except Exception as e:
+                _kairosdis_job["errors"].append(str(e)[:120])
+
+        _kairosdis_job["status"] = "completed"
+        _kairosdis_job["progress"] = 100
+
+    except Exception as e:
+        _kairosdis_job["status"] = "error"
+        _kairosdis_job["errors"].append(str(e)[:200])
+
+
+@router.post("/scrape-kairosdis")
+def start_kairosdis_scraper(background_tasks: BackgroundTasks):
+    if _kairosdis_job.get("status") not in ("idle", "completed", "error"):
+        raise HTTPException(status_code=409, detail="Scraper ya en ejecución")
+    background_tasks.add_task(_run_kairosdis_scraper)
+    return {"status": "started", "message": "Importando desde kairosdis.com.ar en segundo plano"}
+
+
+@router.get("/scrape-kairosdis/status")
+def kairosdis_scraper_status():
+    return _kairosdis_job

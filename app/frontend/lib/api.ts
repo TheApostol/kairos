@@ -175,6 +175,10 @@ export async function getProducts(params?: Record<string, string>) {
   return apiFetch(`/products${query}`)
 }
 
+export async function getProductCategories() {
+  return apiFetch('/products/categories')
+}
+
 export async function getProduct(id: string | number) {
   return apiFetch(`/products/${id}`)
 }
@@ -195,8 +199,13 @@ export async function updateProduct(id: string | number, data: Record<string, un
   })
 }
 
-export async function getProductPriceHistory(id: string | number) {
-  return apiFetch(`/products/${id}/price-history`)
+// Kairosdis Product Scraper
+export async function scrapeKairosdis() {
+  return apiFetch('/products/scrape-kairosdis', { method: 'POST' })
+}
+
+export async function getKairosdisScraperStatus() {
+  return apiFetch('/products/scrape-kairosdis/status')
 }
 
 // Scraper

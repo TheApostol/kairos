@@ -18,9 +18,9 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2 } from 'lucide-react'
+import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package } from 'lucide-react'
 import Link from 'next/link'
-import { getLeads } from '@/lib/api'
+import { getLeads, getProducts } from '@/lib/api'
 
 interface RecentLead {
   id: string
@@ -31,6 +31,14 @@ interface RecentLead {
   estado: string
   score_ia?: number
   created_at?: string
+}
+
+interface CatalogProduct {
+  id: number
+  nombre: string
+  categoria?: string
+  precio_minorista?: number
+  imagen_url?: string
 }
 
 interface LeadStats {
@@ -72,6 +80,8 @@ export default function DashboardPage() {
   const [orderStats, setOrderStats] = useState<OrderStats | null>(null)
   const [overdueTasksCount, setOverdueTasksCount] = useState<number | null>(null)
   const [recentLeads, setRecentLeads] = useState<RecentLead[]>([])
+  const [catalogTotal, setCatalogTotal] = useState<number | null>(null)
+  const [catalogPreview, setCatalogPreview] = useState<CatalogProduct[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -90,6 +100,13 @@ export default function DashboardPage() {
 
     getLeads({ limit: 8, page: 1 })
       .then((res) => setRecentLeads(res?.items ?? []))
+      .catch(() => {})
+
+    getProducts({ page: '1', per_page: '8' })
+      .then((res) => {
+        setCatalogTotal(res?.total ?? 0)
+        setCatalogPreview(res?.items ?? [])
+      })
       .catch(() => {})
   }, [])
 
@@ -164,6 +181,14 @@ export default function DashboardPage() {
       urgent: overdueTasksCount !== null && overdueTasksCount > 0,
       href: '/leads',
     },
+    {
+      title: 'Productos',
+      value: catalogTotal !== null ? catalogTotal.toLocaleString('es-AR') : '—',
+      icon: Package,
+      iconColor: '#C9A040',
+      iconBg: 'rgba(201,160,64,0.12)',
+      href: '/catalog',
+    },
   ]
 
   const provinciaData = (leadStats?.por_provincia ?? [])
@@ -194,7 +219,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-3">
         {statCards.map(({ title, value, icon: Icon, iconColor, iconBg, href, ...rest }) => {
           const urgent = (rest as { urgent?: boolean }).urgent
           return (
@@ -395,6 +420,50 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+      {/* Catalog Preview */}
+      {catalogPreview.length > 0 && (
+        <Card>
+          <div className="flex items-center justify-between px-6 pt-5 pb-3">
+            <div>
+              <h2 className="text-base font-semibold" style={{ color: '#4A3728' }}>Catálogo de Productos</h2>
+              <p className="text-xs mt-0.5" style={{ color: '#6B4F3A' }}>
+                {catalogTotal !== null ? `${catalogTotal.toLocaleString('es-AR')} productos importados` : ''}
+              </p>
+            </div>
+            <Link href="/catalog" className="text-xs hover:underline font-medium" style={{ color: '#C9A040' }}>
+              Ver catálogo completo →
+            </Link>
+          </div>
+          <CardContent className="pb-5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+              {catalogPreview.map((p) => (
+                <Link key={p.id} href="/catalog" className="group text-center">
+                  <div className="aspect-square rounded-lg overflow-hidden bg-slate-100 mb-1.5">
+                    {p.imagen_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={p.imagen_url}
+                        alt={p.nombre}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Package className="w-6 h-6 text-slate-300" />
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs font-medium text-slate-700 truncate leading-tight">{p.nombre}</p>
+                  {p.precio_minorista && (
+                    <p className="text-xs mt-0.5" style={{ color: '#C9A040' }}>
+                      {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(p.precio_minorista)}
+                    </p>
+                  )}
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
