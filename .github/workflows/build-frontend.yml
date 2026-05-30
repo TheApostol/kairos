@@ -9,6 +9,8 @@ on:
 
 jobs:
   build:
+    # Skip if this push is itself from the build bot (prevents infinite loop)
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -37,7 +39,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # Add .next to git (force since it's gitignored)
           git add -f app/frontend/.next
-          git diff --staged --quiet || git commit -m "chore: auto-build frontend [skip ci]"
+          git diff --staged --quiet || git commit -m "chore: auto-build frontend"
           # Pull rebase to handle concurrent pushes, then push
           git pull --rebase origin main
           git push

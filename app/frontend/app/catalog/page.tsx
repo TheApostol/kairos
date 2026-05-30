@@ -514,11 +514,11 @@ export default function CatalogPage() {
 
       {/* Add / Edit Product Dialog */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{editingProduct ? 'Editar Producto' : 'Nuevo Producto'}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 py-2">
+          <div className="space-y-3 py-2 overflow-y-auto flex-1 pr-1">
             <ImageUploader value={form.imagen_url} onChange={(v) => setForm({ ...form, imagen_url: v })} />
 
             <div className="space-y-1.5">

@@ -18,9 +18,10 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package } from 'lucide-react'
+import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package, Globe, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
-import { getLeads, getProducts } from '@/lib/api'
+import { getLeads, getProducts, scrapeKairosdis, getKairosdisScraperStatus } from '@/lib/api'
+import { Button } from '@/components/ui/button'
 
 interface RecentLead {
   id: string
@@ -84,6 +85,8 @@ export default function DashboardPage() {
   const [catalogPreview, setCatalogPreview] = useState<CatalogProduct[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [kdScraping, setKdScraping] = useState(false)
+  const [kdStatus, setKdStatus] = useState('')
 
   useEffect(() => {
     Promise.all([getLeadStats(), getOrderStats()])
@@ -109,6 +112,38 @@ export default function DashboardPage() {
       })
       .catch(() => {})
   }, [])
+
+  const startKdScrape = async () => {
+    if (kdScraping) return
+    setKdScraping(true)
+    setKdStatus('Iniciando...')
+    try {
+      await scrapeKairosdis()
+      const poll = setInterval(async () => {
+        try {
+          const s = await getKairosdisScraperStatus()
+          if (s.status === 'running') {
+            setKdStatus(`${s.progress ?? 0}/${s.total ?? '?'} productos`)
+          } else if (s.status === 'done') {
+            clearInterval(poll)
+            setKdScraping(false)
+            setKdStatus(`✓ ${s.new ?? 0} nuevos, ${s.updated ?? 0} actualizados`)
+            getProducts({ page: '1', per_page: '8' }).then((res) => {
+              setCatalogTotal(res?.total ?? 0)
+              setCatalogPreview(res?.items ?? [])
+            }).catch(() => {})
+          } else if (s.status === 'error') {
+            clearInterval(poll)
+            setKdScraping(false)
+            setKdStatus('Error al importar')
+          }
+        } catch { clearInterval(poll); setKdScraping(false) }
+      }, 3000)
+    } catch {
+      setKdScraping(false)
+      setKdStatus('Error al iniciar')
+    }
+  }
 
   if (loading) {
     return (
@@ -430,9 +465,26 @@ export default function DashboardPage() {
                 {catalogTotal !== null ? `${catalogTotal.toLocaleString('es-AR')} productos importados` : ''}
               </p>
             </div>
-            <Link href="/catalog" className="text-xs hover:underline font-medium" style={{ color: '#C9A040' }}>
-              Ver catálogo completo →
-            </Link>
+            <div className="flex items-center gap-3">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={startKdScrape}
+                disabled={kdScraping}
+                className="gap-1.5 text-xs h-7"
+              >
+                {kdScraping ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />}
+                {kdScraping ? 'Importando...' : 'Importar Kairosdis'}
+              </Button>
+              {kdStatus && (
+                <span className="text-xs" style={{ color: kdStatus.startsWith('✓') ? '#16a34a' : kdStatus.startsWith('Error') ? '#dc2626' : '#6B4F3A' }}>
+                  {kdStatus}
+                </span>
+              )}
+              <Link href="/catalog" className="text-xs hover:underline font-medium" style={{ color: '#C9A040' }}>
+                Ver catálogo completo →
+              </Link>
+            </div>
           </div>
           <CardContent className="pb-5">
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
