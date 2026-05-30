@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import re
 import time
 import json
@@ -297,6 +298,8 @@ def _scrape_website(url: str) -> dict:
         base_url + "/sobre-nosotros",
     ]
 
+    MAX_BODY_BYTES = 400_000  # 400KB cap to avoid OOM on Render free tier
+
     try:
         with httpx.Client(timeout=12, follow_redirects=True) as client:
             for page_url in pages_to_try:
@@ -305,12 +308,17 @@ def _scrape_website(url: str) -> dict:
                     if resp.status_code != 200:
                         continue
 
-                    text = resp.text
+                    # Read only up to MAX_BODY_BYTES to avoid loading multi-MB pages
+                    raw = resp.content[:MAX_BODY_BYTES]
+                    text = raw.decode("utf-8", errors="replace")
+                    del raw
 
                     if bs4_available:
                         from bs4 import BeautifulSoup
                         soup = BeautifulSoup(text, "html.parser")
                         _extract_from_soup(soup, result)
+                        soup.decompose()
+                        del soup
                     else:
                         # Fallback regex-only path
                         if not result["email"]:
@@ -474,20 +482,21 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
-        params = {"select": "*", "website": "neq.", "limit": 1000}
+        BATCH_SIZE = 200  # process in chunks to keep memory low on Render free tier
+
         if lead_ids:
             ids_str = ",".join(lead_ids)
-            params = {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)}
+            all_leads = db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
+        else:
+            all_leads = db.raw_select("leads", {"select": "*", "website": "neq.", "limit": BATCH_SIZE})
+            all_leads = [l for l in all_leads if not l.get("email")]
 
-        leads = db.raw_select("leads", params)
-        if not lead_ids:
-            leads = [l for l in leads if not l.get("email")]  # filter null or empty in Python
-        total = len(leads)
+        total = len(all_leads)
         enriched_count = 0
 
         db.update("scraper_jobs", job_id, {"total": total})
 
-        for i, lead in enumerate(leads):
+        for i, lead in enumerate(all_leads):
             website = lead.get("website", "")
             if not website:
                 continue
@@ -500,12 +509,17 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                     update_data[field] = enrich[field]
 
             if update_data:
-                # Recalculate score with enriched data
                 merged = {**lead, **update_data}
                 update_data["score_ia"] = _score_lead(merged)
                 update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
                 db.update("leads", lead["id"], update_data)
                 enriched_count += 1
+
+            del enrich, update_data
+
+            # Run GC every 25 leads to reclaim BS4 / httpx memory
+            if (i + 1) % 25 == 0:
+                gc.collect()
 
             time.sleep(0.3)
             progress = int(((i + 1) / max(total, 1)) * 100)
@@ -513,6 +527,9 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                 "progress": progress,
                 "new_found": enriched_count,
             })
+
+        del all_leads
+        gc.collect()
 
         db.update("scraper_jobs", job_id, {
             "status": "completed",
