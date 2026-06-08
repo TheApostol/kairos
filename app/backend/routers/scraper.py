@@ -167,17 +167,19 @@ def _score_lead(record: dict) -> int:
 
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 INSTAGRAM_REGEX = re.compile(r"instagram\.com/([A-Za-z0-9._]{1,30})")
-WA_REGEX = re.compile(r"(?:wa\.me|whatsapp\.com/send\?phone=)[/\?]?(\d{6,15})")
-# Broad Argentina phone pattern: captures 8-15 digit sequences from tel: links and text
+WA_REGEX = re.compile(
+    r'(?:wa\.me|whatsapp\.com/send|api\.whatsapp\.com/send)[/?&]*(?:phone=)?(\+?\d[\d\s\-]{5,17}\d)',
+    re.IGNORECASE,
+)
 TEL_HREF_REGEX = re.compile(r'href=["\']tel:([+\d\s\-().]{6,20})["\']', re.IGNORECASE)
-# Phone pattern in plain text: handles formats like (011) 4567-8901, 011-15-1234-5678, +54 9 11 etc.
-PHONE_TEXT_REGEX = re.compile(
+
+# Strict Argentine phone: requires +54/54 prefix OR 0XX area code OR (XX) area code
+AR_PHONE_REGEX = re.compile(
     r'(?<!\d)'
-    r'(?:\+54[\s\-]?)?'
-    r'(?:0?11|0?[2-9]\d{1,3})?'
-    r'[\s\-]?'
-    r'(?:15[\s\-]?)?'
-    r'\d{4}[\s\-]?\d{4}'
+    r'(?:'
+    r'\+?54[\s\-.]?9?[\s\-.]?\d{2,4}[\s\-.]?\d{3,4}[\s\-.]?\d{4}'  # +54 / 54 international
+    r'|\(?0\d{2,4}\)?[\s\-./](?:15[\s\-.]?)?\d{3,4}[\s\-.]?\d{4}'  # 0XX area code
+    r')'
     r'(?!\d)'
 )
 
@@ -205,6 +207,15 @@ def _is_valid_email(email: str) -> bool:
     )
 
 
+def _decode_cf_email(encoded: str) -> str:
+    """Decode CloudFlare's data-cfemail obfuscation."""
+    try:
+        r = int(encoded[:2], 16)
+        return "".join(chr(int(encoded[i:i + 2], 16) ^ r) for i in range(2, len(encoded), 2))
+    except Exception:
+        return ""
+
+
 def _extract_from_soup(soup, result: dict) -> None:
     """Extract contact info using BeautifulSoup from parsed HTML."""
 
@@ -212,7 +223,6 @@ def _extract_from_soup(soup, result: dict) -> None:
     for script in soup.find_all("script", {"type": "application/ld+json"}):
         try:
             data = json.loads(script.string or "")
-            # Handle @graph arrays and plain lists
             entries = []
             if isinstance(data, list):
                 entries = data
@@ -221,14 +231,12 @@ def _extract_from_soup(soup, result: dict) -> None:
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
-                # direct email/telephone
                 if not result["email"] and entry.get("email"):
                     c = str(entry["email"]).strip()
                     if _is_valid_email(c):
                         result["email"] = c
                 if not result["telefono"] and entry.get("telephone"):
                     result["telefono"] = str(entry["telephone"]).strip()
-                # nested contactPoint
                 cp = entry.get("contactPoint") or {}
                 if isinstance(cp, list):
                     cp = cp[0] if cp else {}
@@ -241,21 +249,27 @@ def _extract_from_soup(soup, result: dict) -> None:
         except Exception:
             pass
 
-    # 2. <meta> tags (some themes put email in og:email or similar)
+    # 2. CloudFlare email protection (data-cfemail) — extremely common on small business sites
+    for el in soup.find_all(attrs={"data-cfemail": True}):
+        if not result["email"]:
+            decoded = _decode_cf_email(el["data-cfemail"])
+            if decoded and _is_valid_email(decoded):
+                result["email"] = decoded
+
+    # 3. <meta> tags + data-email attributes
     for meta in soup.find_all("meta"):
         content = meta.get("content", "")
         name = (meta.get("name") or meta.get("property") or "").lower()
         if not result["email"] and ("email" in name or "mail" in name):
             if content and _is_valid_email(content):
                 result["email"] = content
-        # data-email attribute anywhere
     for el in soup.find_all(attrs={"data-email": True}):
         if not result["email"]:
             c = el["data-email"].strip()
             if _is_valid_email(c):
                 result["email"] = c
 
-    # 3. Microdata: itemprop attributes
+    # 4. Microdata: itemprop attributes
     for el in soup.find_all(itemprop=True):
         prop = el.get("itemprop", "")
         if prop == "email" and not result["email"]:
@@ -267,7 +281,7 @@ def _extract_from_soup(soup, result: dict) -> None:
             if val:
                 result["telefono"] = val.strip()
 
-    # 4. All <a> tags — mailto, tel, instagram, whatsapp
+    # 5. All <a> tags — mailto, tel, instagram, whatsapp
     for a in soup.find_all("a", href=True):
         href = str(a.get("href", ""))
         if "mailto:" in href and not result["email"]:
@@ -280,43 +294,66 @@ def _extract_from_soup(soup, result: dict) -> None:
                 result["telefono"] = raw
         if "instagram.com" in href and not result["instagram"]:
             ig = INSTAGRAM_REGEX.search(href)
-            if ig and ig.group(1) not in ("p", "reel", "stories", "explore", "accounts"):
+            if ig and ig.group(1) not in ("p", "reel", "stories", "explore", "accounts", "sharer"):
                 result["instagram"] = f"@{ig.group(1)}"
         if ("wa.me" in href or "whatsapp.com" in href) and not result["whatsapp"]:
             wa = WA_REGEX.search(href)
             if wa:
-                result["whatsapp"] = wa.group(1)
+                num = re.sub(r'[\s\-.]', '', wa.group(1))
+                result["whatsapp"] = num
 
-    # 5. Priority zones: footer / contact sections
-    if not result["email"]:
-        priority_zones = (
-            soup.find_all("footer")
-            + soup.find_all(class_=re.compile(r"footer|contact|contacto|pie|bottom|sidebar", re.I))
-            + soup.find_all(id=re.compile(r"footer|contact|contacto|pie|bottom|sidebar", re.I))
-        )
-        for zone in priority_zones:
-            emails = EMAIL_REGEX.findall(zone.get_text(" "))
+    # 6. Priority zones: footer / contact sections — email and phone
+    priority_zones = (
+        soup.find_all("footer")
+        + soup.find_all(class_=re.compile(r"footer|contact|contacto|pie|bottom|sidebar", re.I))
+        + soup.find_all(id=re.compile(r"footer|contact|contacto|pie|bottom|sidebar", re.I))
+    )
+    for zone in priority_zones:
+        zone_text = zone.get_text(" ")
+        if not result["email"]:
+            emails = EMAIL_REGEX.findall(zone_text)
             valid = [e for e in emails if _is_valid_email(e)]
             if valid:
                 result["email"] = valid[0]
-                break
+        if not result["telefono"]:
+            phone_matches = AR_PHONE_REGEX.findall(zone_text)
+            if phone_matches:
+                result["telefono"] = phone_matches[0].strip()
 
-    # 6. FULL page text scan — last resort, catches plain-text emails in any element
+    # 7. Full page text — email with [at] / (at) deobfuscation variants
     if not result["email"]:
         full_text = soup.get_text(separator=" ")
-        # Also try deobfuscated forms: "info [at] empresa.com", "info(at)empresa.com"
-        deob = re.sub(r'\s*\[at\]\s*|\s*\(at\)\s*|\s+AT\s+', '@', full_text, flags=re.IGNORECASE)
-        deob = re.sub(r'\s*\[dot\]\s*|\s*\(dot\)\s*', '.', deob, flags=re.IGNORECASE)
+        deob = re.sub(r'\s*[\[(]at[\])]?\s*|\s+AT\s+', '@', full_text, flags=re.IGNORECASE)
+        deob = re.sub(r'\s*[\[(]dot[\])]?\s*', '.', deob, flags=re.IGNORECASE)
         emails = EMAIL_REGEX.findall(deob)
         valid = [e for e in emails if _is_valid_email(e)]
         if valid:
             result["email"] = valid[0]
 
-    # 7. Phone: scan tel: hrefs then full HTML string
+    # 8. Phone: tel: href scan, then full AR phone pattern over page text
     if not result["telefono"]:
         tel_matches = TEL_HREF_REGEX.findall(str(soup))
         if tel_matches:
             result["telefono"] = tel_matches[0].strip()
+    if not result["telefono"]:
+        full_text = soup.get_text(separator=" ")
+        phone_matches = AR_PHONE_REGEX.findall(full_text)
+        for m in phone_matches:
+            cleaned = re.sub(r'[\s\-./()]', '', m)
+            if 8 <= len(cleaned.lstrip('+')) <= 13:
+                result["telefono"] = m.strip()
+                break
+
+    # 9. If we have a WhatsApp number but no phone, derive phone from it
+    if result.get("whatsapp") and not result["telefono"]:
+        wa_digits = re.sub(r'[^\d]', '', result["whatsapp"])
+        # +54 9 11 XXXX-XXXX → format nicely
+        if wa_digits.startswith("549") and len(wa_digits) == 13:
+            result["telefono"] = f"+{wa_digits}"
+        elif wa_digits.startswith("54") and len(wa_digits) >= 10:
+            result["telefono"] = f"+{wa_digits}"
+        elif len(wa_digits) >= 8:
+            result["telefono"] = wa_digits
 
 
 def _scrape_website(url: str) -> dict:
@@ -332,16 +369,20 @@ def _scrape_website(url: str) -> dict:
         return result
 
     base_url = url.rstrip("/")
-    # Try contact pages first (more likely to have email), then homepage fallback
+    # Contact/about pages first (concentrated contact info), homepage as final fallback
     pages_to_try = [
         base_url + "/contacto",
         base_url + "/contactanos",
         base_url + "/contact",
+        base_url + "/contact-us",
+        base_url + "/pages/contact",       # Shopify
+        base_url + "/pages/contactanos",   # Shopify
+        base_url + "/pages/nosotros",      # Shopify
+        base_url + "/pages/about",         # Shopify
         base_url + "/sobre-nosotros",
         base_url + "/nosotros",
         base_url + "/quienes-somos",
-        base_url + "/pages/contact",       # Shopify
-        base_url + "/pages/contactanos",   # Shopify
+        base_url + "/acerca-de",
         base_url + "/info",
         base_url,                          # homepage last — largest, try only if needed
     ]
@@ -547,14 +588,27 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
-        BATCH_SIZE = 200  # process in chunks to keep memory low on Render free tier
-
         if lead_ids:
             ids_str = ",".join(lead_ids)
-            all_leads = db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
+            all_leads = db.raw_select(
+                "leads",
+                {"select": "id,empresa,website,email,telefono,instagram,whatsapp,rating,reviews_count,score_ia",
+                 "id": f"in.({ids_str})", "limit": len(lead_ids)},
+            )
         else:
-            all_leads = db.raw_select("leads", {"select": "*", "website": "neq.", "limit": BATCH_SIZE})
-            all_leads = [l for l in all_leads if not l.get("email")]
+            # Fetch ALL leads that have a website but are missing email OR phone.
+            # select_all paginates in batches of 1000 so memory stays low.
+            candidates = db.select_all(
+                "leads",
+                filters={"website": "neq."},
+                select_cols="id,empresa,website,email,telefono,instagram,whatsapp,rating,reviews_count,score_ia",
+            )
+            all_leads = [
+                l for l in candidates
+                if not l.get("email") or not l.get("telefono")
+            ]
+            del candidates
+            gc.collect()
 
         total = len(all_leads)
         enriched_count = 0
@@ -582,11 +636,10 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
 
             del enrich, update_data
 
-            # Run GC every 25 leads to reclaim BS4 / httpx memory
             if (i + 1) % 25 == 0:
                 gc.collect()
 
-            time.sleep(0.3)
+            time.sleep(0.2)
             progress = int(((i + 1) / max(total, 1)) * 100)
             db.update("scraper_jobs", job_id, {
                 "progress": progress,
