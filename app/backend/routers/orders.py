@@ -473,6 +473,7 @@ def get_order(order_id: str):
 
 
 @router.put("/{order_id}")
+@router.patch("/{order_id}")
 def update_order(order_id: str, body: OrderUpdate):
     orders = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if not orders:

@@ -503,6 +503,7 @@ def create_product(body: ProductCreate):
 
 
 @router.put("/{product_id}")
+@router.patch("/{product_id}")
 def update_product(product_id: str, body: ProductUpdate):
     products = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
     if not products:
