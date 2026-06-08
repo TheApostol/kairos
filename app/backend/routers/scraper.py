@@ -1,8 +1,10 @@
 import asyncio
+import difflib
 import gc
 import re
 import time
 import json
+import unicodedata
 from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -368,7 +370,6 @@ def _extract_from_soup(soup, result: dict) -> None:
 
 
 SKIP_SEARCH_DOMAINS = {
-    "facebook.com", "instagram.com", "twitter.com", "youtube.com",
     "google.com", "maps.google", "tripadvisor", "yelp.com",
     "mercadolibre", "infobae.com", "clarin.com", "lanacion.com",
     "paginas-amarillas", "guialocal", "cylex", "dnb.com",
@@ -376,18 +377,41 @@ SKIP_SEARCH_DOMAINS = {
     "pinterest.com", "linkedin.com", "tiktok.com", "whatsapp.com",
 }
 
+# Social media domains — excluded from website search but used in social search
+SOCIAL_DOMAINS = {"facebook.com", "instagram.com", "twitter.com", "youtube.com"}
 
-def _search_for_website(nombre: str, ciudad: str = "", provincia: str = "") -> str:
-    """DuckDuckGo search to find a business's website by name + location."""
+
+def _normalize_biz_name(name: str) -> str:
+    name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    name = re.sub(r"[^a-z0-9 ]", " ", name)
+    for stop in ("srl", "sa", "sas", "shop", "tienda", "store", "distribuidora", "argentina"):
+        name = re.sub(rf"\b{stop}\b", " ", name)
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def _names_match(lead_name: str, result_title: str, threshold: float = 0.5) -> bool:
+    # Strip common platform suffixes from result title
+    result_title = re.sub(r"\s*\(@[^)]+\).*$", "", result_title)  # "Name (@handle) • Instagram"
+    result_title = re.sub(r"\s*[-|–].*$", "", result_title)        # "Name - About | Facebook"
+    na = _normalize_biz_name(lead_name)
+    nb = _normalize_biz_name(result_title)
+    if not na or not nb:
+        return False
+    if na in nb or nb in na:
+        return True
+    # Any significant word from lead name in result (handles partial matches)
+    words_a = {w for w in na.split() if len(w) > 3}
+    words_b = set(nb.split())
+    if words_a and words_a & words_b:
+        return True
+    return difflib.SequenceMatcher(None, na, nb).ratio() >= threshold
+
+
+def _ddg_search(query: str) -> list:
+    """Run a DuckDuckGo HTML search. Returns list of {url, title, snippet} dicts."""
     import httpx
-    from urllib.parse import quote_plus, urlparse, parse_qs, unquote
-
-    if not nombre:
-        return ""
-
-    location = " ".join(filter(None, [ciudad, provincia]))
-    query = f'"{nombre}" {location} Argentina'.strip()
-
+    from urllib.parse import urlparse, parse_qs, unquote
+    results = []
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
@@ -400,39 +424,153 @@ def _search_for_website(nombre: str, ciudad: str = "", provincia: str = "") -> s
                 headers=headers,
             )
         if resp.status_code != 200:
-            return ""
-
-        try:
-            from bs4 import BeautifulSoup
-        except ImportError:
-            return ""
-
+            return []
+        from bs4 import BeautifulSoup
         soup = BeautifulSoup(resp.text, "html.parser")
-
-        for a in soup.find_all("a", class_="result__a"):
-            href = a.get("href", "")
-            # DDG wraps links: //duckduckgo.com/l/?uddg=REAL_URL
+        for div in soup.find_all("div", class_="result__body"):
+            a_tag = div.find("a", class_="result__a")
+            snip_tag = div.find("a", class_="result__snippet")
+            if not a_tag:
+                continue
+            href = a_tag.get("href", "")
             if "uddg=" in href:
                 try:
                     if href.startswith("//"):
                         href = "https:" + href
-                    real_url = unquote(parse_qs(urlparse(href).query).get("uddg", [""])[0])
+                    href = unquote(parse_qs(urlparse(href).query).get("uddg", [""])[0])
                 except Exception:
                     continue
-            else:
-                real_url = href
-
-            if not real_url.startswith("http"):
+            if not href.startswith("http"):
                 continue
-
-            domain = urlparse(real_url).netloc.lower().replace("www.", "")
-            if domain and not any(skip in domain for skip in SKIP_SEARCH_DOMAINS):
-                return real_url.split("?")[0].rstrip("/")
-
+            results.append({
+                "url": href.split("?")[0].rstrip("/"),
+                "title": a_tag.get_text(strip=True),
+                "snippet": snip_tag.get_text(" ", strip=True) if snip_tag else "",
+            })
     except Exception:
         pass
+    return results
 
+
+def _search_for_website(nombre: str, ciudad: str = "", provincia: str = "") -> str:
+    """DuckDuckGo search to find a business's website by name + location."""
+    if not nombre:
+        return ""
+    location = " ".join(filter(None, [ciudad, provincia]))
+    query = f'"{nombre}" {location} Argentina sitio web'.strip()
+    for r in _ddg_search(query):
+        domain = r["url"].split("/")[2].lower().replace("www.", "")
+        skip = SKIP_SEARCH_DOMAINS | SOCIAL_DOMAINS
+        if domain and not any(s in domain for s in skip):
+            if _names_match(nombre, r["title"]):
+                return r["url"]
     return ""
+
+
+def _search_social(nombre: str, platform: str, ciudad: str = "", provincia: str = "") -> dict:
+    """
+    Search DuckDuckGo for a business's social media profile on a given platform.
+    Returns {url, handle, email, telefono} — all fields verified against lead name.
+    """
+    result = {"url": "", "handle": "", "email": "", "telefono": ""}
+    if not nombre:
+        return result
+    location = " ".join(filter(None, [ciudad, provincia]))
+    query = f'site:{platform} "{nombre}" {location} Argentina'.strip()
+    for r in _ddg_search(query):
+        if platform not in r["url"]:
+            continue
+        if not _names_match(nombre, r["title"]):
+            continue
+        result["url"] = r["url"]
+        # Instagram handle from URL
+        if "instagram.com" in r["url"]:
+            ig_m = re.search(r"instagram\.com/([A-Za-z0-9._]{1,30})", r["url"])
+            if ig_m and ig_m.group(1) not in ("p", "reel", "stories", "explore", "accounts", "tv"):
+                result["handle"] = "@" + ig_m.group(1)
+        # Mine snippet for email / phone
+        text = r["title"] + " " + r["snippet"]
+        emails = [e for e in EMAIL_REGEX.findall(text) if _is_valid_email(e)]
+        if emails:
+            result["email"] = emails[0]
+        ph = PHONE_TEXT_REGEX.search(text)
+        if ph and len(re.sub(r"\D", "", ph.group())) >= 8:
+            result["telefono"] = ph.group().strip()
+        break  # first matching result
+    return result
+
+
+def _scrape_ig_meta(handle: str) -> dict:
+    """Scrape public Instagram profile for website link and contact info in bio."""
+    import httpx
+    result = {"website": "", "email": "", "telefono": ""}
+    username = handle.lstrip("@")
+    if not username:
+        return result
+    url = f"https://www.instagram.com/{username}/"
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Accept-Language": "es-AR",
+        }
+        with httpx.Client(timeout=8, follow_redirects=True) as client:
+            resp = client.get(url, headers=headers)
+        if resp.status_code != 200:
+            return result
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(resp.text, "html.parser")
+        # Bio sometimes in og:description: "N Followers, N Following - Bio text"
+        og = soup.find("meta", property="og:description")
+        if og:
+            bio = re.sub(r"^\d.*?-\s*", "", og.get("content", ""))
+            emails = [e for e in EMAIL_REGEX.findall(bio) if _is_valid_email(e)]
+            if emails:
+                result["email"] = emails[0]
+            ph = PHONE_TEXT_REGEX.search(bio)
+            if ph and len(re.sub(r"\D", "", ph.group())) >= 8:
+                result["telefono"] = ph.group().strip()
+        # External link in bio (often a linktree or direct site)
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith("http") and "instagram.com" not in href:
+                parsed_domain = href.split("/")[2].lower()
+                if not any(s in parsed_domain for s in SKIP_SEARCH_DOMAINS | SOCIAL_DOMAINS):
+                    result["website"] = href.split("?")[0].rstrip("/")
+                    break
+    except Exception:
+        pass
+    return result
+
+
+def _scrape_fb_about(fb_url: str) -> dict:
+    """Scrape mobile Facebook page's about section for contact info."""
+    import httpx
+    result = {"email": "", "telefono": "", "website": ""}
+    mobile_url = fb_url.replace("www.facebook.com", "m.facebook.com").rstrip("/") + "/?v=info"
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Accept-Language": "es-AR",
+        }
+        with httpx.Client(timeout=8, follow_redirects=True) as client:
+            resp = client.get(mobile_url, headers=headers)
+        if resp.status_code != 200:
+            return result
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(resp.text, "html.parser")
+        _extract_from_soup(soup, result)
+        # Also grab any non-FB external links as website
+        if not result["website"]:
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if href.startswith("http") and "facebook.com" not in href:
+                    domain = href.split("/")[2].lower()
+                    if not any(s in domain for s in SKIP_SEARCH_DOMAINS | SOCIAL_DOMAINS):
+                        result["website"] = href.split("?")[0].rstrip("/")
+                        break
+    except Exception:
+        pass
+    return result
 
 
 def _scrape_website(url: str) -> dict:
@@ -703,34 +841,75 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
         db.update("scraper_jobs", job_id, {"total": total})
 
         for i, lead in enumerate(all_leads):
+            nombre  = lead.get("empresa", "")
+            ciudad  = lead.get("ciudad", "")
+            prov    = lead.get("provincia", "")
             website = (lead.get("website") or "").strip()
-            update_data = {}
+            update_data: dict = {}
 
-            # No website from Google Maps → search DuckDuckGo for one
+            def _has(field: str) -> bool:
+                return bool(lead.get(field) or update_data.get(field))
+
+            # ── Phase 1: Website ──────────────────────────────────────────
             if not website:
-                found = _search_for_website(
-                    lead.get("empresa", ""),
-                    lead.get("ciudad", ""),
-                    lead.get("provincia", ""),
-                )
+                found = _search_for_website(nombre, ciudad, prov)
                 if found:
                     website = found
                     update_data["website"] = found
                     lead["website"] = found
-                time.sleep(1)  # rate-limit search requests
+                time.sleep(1)
 
-            if not website:
-                # Still nothing to scrape
-                progress = int(((i + 1) / max(total, 1)) * 100)
-                db.update("scraper_jobs", job_id, {"progress": progress, "new_found": enriched_count})
-                continue
+            if website:
+                w_info = _scrape_website(website)
+                for field in ("email", "instagram", "whatsapp", "telefono"):
+                    if w_info.get(field) and not _has(field):
+                        update_data[field] = w_info[field]
+                del w_info
 
-            enrich = _scrape_website(website)
+            # ── Phase 2: Instagram ────────────────────────────────────────
+            if not _has("email"):
+                ig = _search_social(nombre, "instagram.com", ciudad, prov)
+                time.sleep(1)
+                if ig.get("handle") and not _has("instagram"):
+                    update_data["instagram"] = ig["handle"]
+                if ig.get("email") and not _has("email"):
+                    update_data["email"] = ig["email"]
+                if ig.get("telefono") and not _has("telefono"):
+                    update_data["telefono"] = ig["telefono"]
 
-            for field in ["email", "instagram", "whatsapp", "telefono"]:
-                if enrich.get(field) and not lead.get(field):
-                    update_data[field] = enrich[field]
+                # Scrape IG profile for bio link → gives us the real website
+                if ig.get("handle") and not _has("email"):
+                    ig_meta = _scrape_ig_meta(ig["handle"])
+                    if ig_meta.get("email") and not _has("email"):
+                        update_data["email"] = ig_meta["email"]
+                    if ig_meta.get("telefono") and not _has("telefono"):
+                        update_data["telefono"] = ig_meta["telefono"]
+                    if ig_meta.get("website") and not _has("website"):
+                        update_data["website"] = ig_meta["website"]
+                        lead["website"] = ig_meta["website"]
+                        # Scrape that site too
+                        w2 = _scrape_website(ig_meta["website"])
+                        for field in ("email", "whatsapp", "telefono"):
+                            if w2.get(field) and not _has(field):
+                                update_data[field] = w2[field]
+                        del w2
 
+            # ── Phase 3: Facebook ─────────────────────────────────────────
+            if not _has("email"):
+                fb = _search_social(nombre, "facebook.com", ciudad, prov)
+                time.sleep(1)
+                if fb.get("email") and not _has("email"):
+                    update_data["email"] = fb["email"]
+                if fb.get("telefono") and not _has("telefono"):
+                    update_data["telefono"] = fb["telefono"]
+                if fb.get("url"):
+                    fb_about = _scrape_fb_about(fb["url"])
+                    for field in ("email", "telefono", "website"):
+                        if fb_about.get(field) and not _has(field):
+                            update_data[field] = fb_about[field]
+                    del fb_about
+
+            # ── Save ──────────────────────────────────────────────────────
             if update_data:
                 merged = {**lead, **update_data}
                 update_data["score_ia"] = _score_lead(merged)
@@ -738,9 +917,8 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                 db.update("leads", lead["id"], update_data)
                 enriched_count += 1
 
-            del enrich, update_data
+            del update_data
 
-            # GC every 25 leads to reclaim BS4 / httpx memory
             if (i + 1) % 25 == 0:
                 gc.collect()
 
