@@ -371,14 +371,22 @@ def _extract_from_soup(soup, result: dict) -> None:
 
 SKIP_SEARCH_DOMAINS = {
     "google.com", "maps.google", "tripadvisor", "yelp.com",
-    "mercadolibre", "infobae.com", "clarin.com", "lanacion.com",
-    "paginas-amarillas", "guialocal", "cylex", "dnb.com",
+    "infobae.com", "clarin.com", "lanacion.com",
     "duckduckgo.com", "bing.com", "wikipedia.org", "wikidata.org",
     "pinterest.com", "linkedin.com", "tiktok.com", "whatsapp.com",
 }
 
-# Social media domains — excluded from website search but used in social search
+# Social media — excluded from website search but searched explicitly
 SOCIAL_DOMAINS = {"facebook.com", "instagram.com", "twitter.com", "youtube.com"}
+
+# Argentine directories — excluded from website field but mined for phone/email
+AR_DIRECTORIES = {
+    "mercadolibre.com.ar", "mercadolibre.com",
+    "paginas-amarillas.com.ar", "paginasamarillas.com.ar",
+    "guialocal.com.ar", "guia-local.com.ar",
+    "cylex.com.ar", "dnb.com",
+    "adondevivir.com", "nosis.com.ar",
+}
 
 
 def _normalize_biz_name(name: str) -> str:
@@ -453,14 +461,14 @@ def _ddg_search(query: str) -> list:
 
 
 def _search_for_website(nombre: str, ciudad: str = "", provincia: str = "") -> str:
-    """DuckDuckGo search to find a business's website by name + location."""
+    """DuckDuckGo search to find a business's own website by name + location."""
     if not nombre:
         return ""
     location = " ".join(filter(None, [ciudad, provincia]))
     query = f'"{nombre}" {location} Argentina sitio web'.strip()
+    skip = SKIP_SEARCH_DOMAINS | SOCIAL_DOMAINS | AR_DIRECTORIES
     for r in _ddg_search(query):
         domain = r["url"].split("/")[2].lower().replace("www.", "")
-        skip = SKIP_SEARCH_DOMAINS | SOCIAL_DOMAINS
         if domain and not any(s in domain for s in skip):
             if _names_match(nombre, r["title"]):
                 return r["url"]
@@ -568,6 +576,124 @@ def _scrape_fb_about(fb_url: str) -> dict:
                     if not any(s in domain for s in SKIP_SEARCH_DOMAINS | SOCIAL_DOMAINS):
                         result["website"] = href.split("?")[0].rstrip("/")
                         break
+    except Exception:
+        pass
+    return result
+
+
+def _scrape_ml_page(url: str) -> dict:
+    """Extract external website and contact info from a Mercado Libre store/profile page."""
+    import httpx
+    result = {"website": "", "email": "", "telefono": ""}
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "es-AR",
+        }
+        with httpx.Client(timeout=8, follow_redirects=True) as client:
+            resp = client.get(url, headers=headers)
+        if resp.status_code != 200:
+            return result
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(resp.text, "html.parser")
+        _extract_from_soup(soup, result)
+        # Pull any external link listed as the seller's own site
+        if not result["website"]:
+            skip = SKIP_SEARCH_DOMAINS | SOCIAL_DOMAINS | AR_DIRECTORIES
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if not href.startswith("http"):
+                    continue
+                domain = href.split("/")[2].lower().replace("www.", "")
+                if "mercadolibre" in domain or "mercadopago" in domain:
+                    continue
+                if not any(s in domain for s in skip):
+                    result["website"] = href.split("?")[0].rstrip("/")
+                    break
+    except Exception:
+        pass
+    return result
+
+
+def _mine_snippets(nombre: str, platform: str, ciudad: str = "", provincia: str = "") -> dict:
+    """
+    Search DuckDuckGo for a business on a given domain and mine the result snippets
+    for phone/email without visiting the target page.
+    Good for directories (Páginas Amarillas, Guía Local, Mercado Libre).
+    """
+    result = {"url": "", "email": "", "telefono": "", "website": ""}
+    location = " ".join(filter(None, [ciudad, provincia]))
+    query = f'site:{platform} "{nombre}" {location} Argentina'.strip()
+    for r in _ddg_search(query):
+        if platform not in r["url"]:
+            continue
+        if not _names_match(nombre, r["title"]):
+            continue
+        result["url"] = r["url"]
+        text = r["title"] + " " + r["snippet"]
+        emails = [e for e in EMAIL_REGEX.findall(text) if _is_valid_email(e)]
+        if emails:
+            result["email"] = emails[0]
+        ph = PHONE_TEXT_REGEX.search(text)
+        if ph and len(re.sub(r"\D", "", ph.group())) >= 8:
+            result["telefono"] = ph.group().strip()
+        break
+    return result
+
+
+def _follow_link_aggregator(url: str) -> dict:
+    """
+    Follow a link-aggregator page (Linktree, bio.link, etc.) and collect all links.
+    Returns {website, email, telefono, instagram, whatsapp}.
+    """
+    import httpx
+    result = {"website": "", "email": "", "telefono": "", "instagram": "", "whatsapp": ""}
+    AGGREGATORS = ("linktree.com", "linktr.ee", "bio.link", "beacons.ai",
+                   "taplink.cc", "campsite.bio", "later.com/bio")
+    if not any(a in url for a in AGGREGATORS):
+        return result
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15",
+        }
+        with httpx.Client(timeout=8, follow_redirects=True) as client:
+            resp = client.get(url, headers=headers)
+        if resp.status_code != 200:
+            return result
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(resp.text, "html.parser")
+        skip = SKIP_SEARCH_DOMAINS | SOCIAL_DOMAINS | AR_DIRECTORIES
+        agg_domains = {a.split("/")[0] for a in AGGREGATORS}
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "mailto:" in href and not result["email"]:
+                candidate = href.split("mailto:")[-1].split("?")[0].strip()
+                if _is_valid_email(candidate):
+                    result["email"] = candidate
+            if ("wa.me" in href or "whatsapp.com" in href) and not result["whatsapp"]:
+                wa = WA_REGEX.search(href)
+                if wa:
+                    result["whatsapp"] = wa.group(1)
+                    if not result["telefono"]:
+                        result["telefono"] = "+" + wa.group(1)
+            if "instagram.com" in href and not result["instagram"]:
+                ig = INSTAGRAM_REGEX.search(href)
+                if ig and ig.group(1) not in ("p", "reel", "stories", "explore"):
+                    result["instagram"] = "@" + ig.group(1)
+            if href.startswith("http") and not result["website"]:
+                domain = href.split("/")[2].lower().replace("www.", "")
+                if not any(s in domain for s in skip | agg_domains):
+                    result["website"] = href.split("?")[0].rstrip("/")
+        # Full-text fallback
+        text = soup.get_text(" ")
+        if not result["email"]:
+            emails = [e for e in EMAIL_REGEX.findall(text) if _is_valid_email(e)]
+            if emails:
+                result["email"] = emails[0]
+        if not result["telefono"]:
+            ph = PHONE_TEXT_REGEX.search(text)
+            if ph and len(re.sub(r"\D", "", ph.group())) >= 8:
+                result["telefono"] = ph.group().strip()
     except Exception:
         pass
     return result
@@ -877,24 +1003,66 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                 if ig.get("telefono") and not _has("telefono"):
                     update_data["telefono"] = ig["telefono"]
 
-                # Scrape IG profile for bio link → gives us the real website
+                # Scrape IG profile for bio link
                 if ig.get("handle") and not _has("email"):
                     ig_meta = _scrape_ig_meta(ig["handle"])
                     if ig_meta.get("email") and not _has("email"):
                         update_data["email"] = ig_meta["email"]
                     if ig_meta.get("telefono") and not _has("telefono"):
                         update_data["telefono"] = ig_meta["telefono"]
-                    if ig_meta.get("website") and not _has("website"):
-                        update_data["website"] = ig_meta["website"]
-                        lead["website"] = ig_meta["website"]
-                        # Scrape that site too
-                        w2 = _scrape_website(ig_meta["website"])
-                        for field in ("email", "whatsapp", "telefono"):
-                            if w2.get(field) and not _has(field):
-                                update_data[field] = w2[field]
-                        del w2
+                    bio_link = ig_meta.get("website", "")
+                    if bio_link and not _has("website"):
+                        # Follow link aggregators (Linktree, bio.link, etc.)
+                        agg = _follow_link_aggregator(bio_link)
+                        for field in ("email", "telefono", "instagram", "whatsapp"):
+                            if agg.get(field) and not _has(field):
+                                update_data[field] = agg[field]
+                        real_site = agg.get("website") or bio_link
+                        if not _has("website"):
+                            update_data["website"] = real_site
+                            lead["website"] = real_site
+                        if not _has("email") and real_site:
+                            w2 = _scrape_website(real_site)
+                            for field in ("email", "whatsapp", "telefono"):
+                                if w2.get(field) and not _has(field):
+                                    update_data[field] = w2[field]
+                            del w2
 
-            # ── Phase 3: Facebook ─────────────────────────────────────────
+            # ── Phase 3: Mercado Libre ────────────────────────────────────
+            if not _has("email") or not _has("website"):
+                ml = _mine_snippets(nombre, "mercadolibre.com.ar", ciudad, prov)
+                time.sleep(1)
+                if ml.get("email") and not _has("email"):
+                    update_data["email"] = ml["email"]
+                if ml.get("telefono") and not _has("telefono"):
+                    update_data["telefono"] = ml["telefono"]
+                # Scrape the ML page for an external website link
+                if ml.get("url") and not _has("website"):
+                    ml_page = _scrape_ml_page(ml["url"])
+                    for field in ("email", "telefono", "website"):
+                        if ml_page.get(field) and not _has(field):
+                            update_data[field] = ml_page[field]
+                    if ml_page.get("website") and not _has("website"):
+                        lead["website"] = ml_page["website"]
+                        w3 = _scrape_website(ml_page["website"])
+                        for field in ("email", "whatsapp", "telefono"):
+                            if w3.get(field) and not _has(field):
+                                update_data[field] = w3[field]
+                        del w3
+
+            # ── Phase 4: Argentine directories (snippet mining) ───────────
+            if not _has("telefono") or not _has("email"):
+                for directory in ("paginas-amarillas.com.ar", "guialocal.com.ar"):
+                    dir_data = _mine_snippets(nombre, directory, ciudad, prov)
+                    time.sleep(0.5)
+                    if dir_data.get("email") and not _has("email"):
+                        update_data["email"] = dir_data["email"]
+                    if dir_data.get("telefono") and not _has("telefono"):
+                        update_data["telefono"] = dir_data["telefono"]
+                    if _has("email") and _has("telefono"):
+                        break
+
+            # ── Phase 5: Facebook ─────────────────────────────────────────
             if not _has("email"):
                 fb = _search_social(nombre, "facebook.com", ciudad, prov)
                 time.sleep(1)
