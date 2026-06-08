@@ -605,6 +605,24 @@ def _scrape_website(url: str) -> dict:
     return result
 
 
+def _discover_website(empresa: str, ciudad: str, api_key: str) -> str:
+    """Re-query Google Places for a business that has no website stored."""
+    if not api_key or not empresa:
+        return ""
+    try:
+        query = f"{empresa} {ciudad} Argentina"
+        data = _places_text_search(api_key, query)
+        places = data.get("results", [])
+        if places:
+            pid = places[0].get("place_id", "")
+            if pid:
+                details = _place_details(api_key, pid)
+                return details.get("website", "")
+    except Exception:
+        pass
+    return ""
+
+
 # ─────────────────────────────────────────────
 # BACKGROUND TASKS
 # ─────────────────────────────────────────────
@@ -753,8 +771,21 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
 
         db.update("scraper_jobs", job_id, {"total": total})
 
+        google_api_key = settings.GOOGLE_API_KEY or ""
+
         for i, lead in enumerate(all_leads):
-            website = lead.get("website", "")
+            website = lead.get("website", "") or ""
+
+            # If no website from Google Places, try to discover it
+            if not website and lead.get("empresa"):
+                website = _discover_website(
+                    lead.get("empresa", ""),
+                    lead.get("ciudad", ""),
+                    google_api_key,
+                )
+                if website:
+                    db.update("leads", lead["id"], {"website": website})
+
             if not website:
                 continue
 
