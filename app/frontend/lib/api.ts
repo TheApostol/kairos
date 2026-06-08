@@ -270,4 +270,21 @@ export async function resetScraper() {
   return apiFetch('/scraper/reset', { method: 'POST' })
 }
 
+// Growth features
+export async function getReorderCandidates(dias = 30) {
+  return apiFetch(`/orders/reorder-candidates?dias=${dias}`)
+}
+
+export async function getTopCustomers(limit = 8) {
+  return apiFetch(`/orders/top-customers?limit=${limit}`)
+}
+
+export async function getLowStockProducts(threshold = 10) {
+  return apiFetch(`/products/low-stock?threshold=${threshold}`)
+}
+
+export async function runMLScraper() {
+  return apiFetch('/scraper/run-ml', { method: 'POST' })
+}
+
 export const API_BASE = API

@@ -457,6 +457,19 @@ def update_product(product_id: str, body: ProductUpdate):
     return updated
 
 
+@router.patch("/{product_id}")
+def patch_product(product_id: str, body: ProductUpdate):
+    products = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
+    if not products:
+        raise HTTPException(status_code=404, detail="Product not found")
+    update_data = body.model_dump(exclude_none=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    update_data["updated_at"] = datetime.utcnow().isoformat()
+    updated = db.update("products", product_id, update_data)
+    return updated
+
+
 @router.delete("/{product_id}")
 def delete_product(product_id: str):
     products = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
@@ -468,6 +481,19 @@ def delete_product(product_id: str):
         "updated_at": datetime.utcnow().isoformat(),
     })
     return {"message": "Product deactivated", "id": product_id}
+
+
+@router.get("/low-stock")
+def get_low_stock(threshold: int = Query(default=10, ge=0)):
+    """Products with stock at or below threshold (excludes NULL stock)."""
+    products = db.raw_select("products", {
+        "select": "id,nombre,categoria,stock,imagen_url,precio_minorista,sku",
+        "activo": "eq.true",
+        "stock": f"lte.{threshold}",
+        "order": "stock.asc",
+        "limit": "30",
+    })
+    return {"items": products, "threshold": threshold}
 
 
 @router.get("/export-catalog")

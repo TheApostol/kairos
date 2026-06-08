@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, deleteScraperJob, resetScraper, getApiUrl } from '@/lib/api'
+import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, deleteScraperJob, resetScraper, getApiUrl, runMLScraper } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +25,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Trash2, RotateCcw } from 'lucide-react'
+import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Trash2, RotateCcw, ShoppingBag } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -94,6 +94,9 @@ export default function ScraperPage() {
 
   const [scraperJobId, setScraperJobId] = useState<string | null>(null)
   const [enrichJobId, setEnrichJobId] = useState<string | null>(null)
+  const [mlState, setMlState] = useState<RunState>('idle')
+  const [mlError, setMlError] = useState('')
+  const [mlJobId, setMlJobId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cancellingId, setCancellingId] = useState<number | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
@@ -158,7 +161,8 @@ export default function ScraperPage() {
 
   const isScraperRunning = scraperState === 'running'
   const isEnrichRunning = enrichState === 'running'
-  const anyJobRunning = isScraperRunning || isEnrichRunning || hasActiveJobs
+  const isMLRunning = mlState === 'running'
+  const anyJobRunning = isScraperRunning || isEnrichRunning || isMLRunning || hasActiveJobs
 
   const cancelJob = async (jobId: number) => {
     setCancellingId(jobId)
@@ -194,10 +198,13 @@ export default function ScraperPage() {
       if (enrichIntervalRef.current) { clearInterval(enrichIntervalRef.current); enrichIntervalRef.current = null }
       setScraperState('idle')
       setEnrichState('idle')
+      setMlState('idle')
       setScraperJobId(null)
       setEnrichJobId(null)
+      setMlJobId(null)
       setScraperError('')
       setEnrichError('')
+      setMlError('')
       setLogLines([])
       setProgress(0)
       await fetchHistory()
@@ -330,6 +337,25 @@ export default function ScraperPage() {
     }
   }
 
+  const startML = async () => {
+    setMlState('running')
+    setMlError('')
+    setMlJobId(null)
+    try {
+      const res = await runMLScraper()
+      if (res?.job_id) setMlJobId(String(res.job_id))
+      await fetchHistory()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setMlState('error')
+      if (msg.includes('409') || msg.includes('corriendo') || msg.includes('job')) {
+        setMlError('Hay un job activo bloqueando el inicio. Usá "Forzar reinicio" para cancelarlo.')
+      } else {
+        setMlError(msg.length < 200 ? msg : 'Error al iniciar el scraper ML.')
+      }
+    }
+  }
+
   const errorJobs = history.filter(j => j.estado === 'error')
   const activeJobsInHistory = history.filter(j => j.estado === 'corriendo' || j.estado === 'pendiente')
 
@@ -369,7 +395,7 @@ export default function ScraperPage() {
       </div>
 
       {/* Action Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Scraper */}
         <Card className={`border-2 transition-all ${isScraperRunning ? 'border-green-400' : 'border-transparent hover:border-slate-200'}`}>
           <CardContent className="pt-6 pb-6">
@@ -471,6 +497,58 @@ export default function ScraperPage() {
                 >
                   <StopCircle className="w-4 h-4" />
                   Pausar enriquecimiento
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        {/* MercadoLibre Scraper */}
+        <Card className={`border-2 transition-all ${isMLRunning ? 'border-amber-400' : 'border-transparent hover:border-slate-200'}`}>
+          <CardContent className="pt-6 pb-6">
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+                {isMLRunning ? (
+                  <Loader2 className="w-8 h-8 text-amber-600 animate-spin" />
+                ) : mlState === 'done' ? (
+                  <CheckCircle2 className="w-8 h-8 text-amber-600" />
+                ) : mlState === 'error' ? (
+                  <XCircle className="w-8 h-8 text-red-500" />
+                ) : (
+                  <ShoppingBag className="w-8 h-8 text-amber-600" />
+                )}
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">Scraper MercadoLibre</h3>
+                <p className="text-sm text-slate-500 mt-1">Encuentra vendedores mayoristas en ML</p>
+              </div>
+              {mlError && (
+                <div className="flex items-start gap-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg text-left">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{mlError}</span>
+                </div>
+              )}
+              <Button
+                onClick={startML}
+                disabled={anyJobRunning}
+                variant="outline"
+                className="w-full border-amber-300 text-amber-700 hover:bg-amber-50 gap-2"
+                size="lg"
+              >
+                {isMLRunning
+                  ? <><Loader2 className="w-5 h-5 animate-spin" />Buscando...</>
+                  : <><ShoppingBag className="w-5 h-5" />Buscar en ML</>}
+              </Button>
+              {isMLRunning && mlJobId && (
+                <Button
+                  variant="outline" size="sm"
+                  className="w-full border-red-300 text-red-600 hover:bg-red-50 gap-2"
+                  onClick={() => stopCurrentJob(mlJobId, () => {
+                    setMlState('idle')
+                    setMlJobId(null)
+                  })}
+                >
+                  <StopCircle className="w-4 h-4" />
+                  Pausar ML
                 </Button>
               )}
             </div>

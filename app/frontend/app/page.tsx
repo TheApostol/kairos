@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { getLeadStats, getOrderStats, getTodayTasks } from '@/lib/api'
+import { getLeadStats, getOrderStats, getTodayTasks, getReorderCandidates, getTopCustomers, getLowStockProducts } from '@/lib/api'
 import {
   BarChart,
   Bar,
@@ -18,10 +18,11 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package, Globe, RefreshCw } from 'lucide-react'
+import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package, Globe, RefreshCw, Clock, Trophy, AlertTriangle, Phone, MessageCircle, Copy, Check } from 'lucide-react'
 import Link from 'next/link'
 import { getLeads, getProducts, scrapeKairosdis, getKairosdisScraperStatus } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 
 interface RecentLead {
   id: string
@@ -56,6 +57,36 @@ interface OrderStats {
   revenue_por_mes?: Array<{ mes: string; revenue: number }>
 }
 
+interface ReorderCandidate {
+  id: number
+  empresa: string
+  telefono?: string
+  whatsapp?: string
+  email?: string
+  ciudad?: string
+  provincia?: string
+  ultimo_pedido?: string
+  ultimo_total?: number
+  ultimo_numero?: string
+}
+
+interface TopCustomer {
+  id: number
+  empresa: string
+  ciudad?: string
+  provincia?: string
+  revenue_total: number
+  total_pedidos: number
+}
+
+interface LowStockProduct {
+  id: number
+  nombre: string
+  categoria?: string
+  stock: number
+  imagen_url?: string
+}
+
 const ESTADO_COLORS: Record<string, string> = {
   nuevo: '#C9A040',
   contactado: '#a8832e',
@@ -87,6 +118,10 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [kdScraping, setKdScraping] = useState(false)
   const [kdStatus, setKdStatus] = useState('')
+  const [reorderCandidates, setReorderCandidates] = useState<ReorderCandidate[]>([])
+  const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([])
+  const [lowStockProducts, setLowStockProducts] = useState<LowStockProduct[]>([])
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     Promise.all([getLeadStats(), getOrderStats()])
@@ -110,6 +145,18 @@ export default function DashboardPage() {
         setCatalogTotal(res?.total ?? 0)
         setCatalogPreview(res?.items ?? [])
       })
+      .catch(() => {})
+
+    getReorderCandidates(30)
+      .then((res) => setReorderCandidates(res?.items ?? []))
+      .catch(() => {})
+
+    getTopCustomers(8)
+      .then((res) => setTopCustomers(res?.items ?? []))
+      .catch(() => {})
+
+    getLowStockProducts(10)
+      .then((res) => setLowStockProducts(res?.items ?? []))
       .catch(() => {})
   }, [])
 
@@ -143,6 +190,14 @@ export default function DashboardPage() {
       setKdScraping(false)
       setKdStatus('Error al iniciar')
     }
+  }
+
+  const copyPublicCatalog = () => {
+    const url = `${window.location.origin}/public/catalog?tipo=mayorista`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
   }
 
   if (loading) {
@@ -455,6 +510,134 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+      {/* Growth Row: Reorder + Stock + Top Customers */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Reorder Reminders */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ color: '#4A3728' }}>
+                <Clock className="w-4 h-4" style={{ color: '#C9A040' }} />
+                Para Reordenar
+              </CardTitle>
+              <Link href="/orders" className="text-xs hover:underline" style={{ color: '#C9A040' }}>Ver órdenes →</Link>
+            </div>
+            <p className="text-xs" style={{ color: '#6B4F3A' }}>Clientes sin pedido hace +30 días</p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {reorderCandidates.length === 0 ? (
+              <p className="text-sm text-slate-400 px-6 py-4">Sin candidatos — ¡al día!</p>
+            ) : (
+              <div className="divide-y">
+                {reorderCandidates.slice(0, 6).map((c) => (
+                  <Link key={c.id} href={`/leads/${c.id}`} className="flex items-center justify-between px-4 py-2.5 hover:bg-amber-50 group">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate group-hover:text-amber-700" style={{ color: '#4A3728' }}>{c.empresa}</p>
+                      <p className="text-xs" style={{ color: '#6B4F3A' }}>
+                        {c.ultimo_pedido ? `Último: ${c.ultimo_pedido}` : 'Sin pedidos'}
+                        {c.ultimo_total ? ` · $${Number(c.ultimo_total).toLocaleString('es-AR')}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0 ml-2">
+                      {c.whatsapp && (
+                        <a href={`https://wa.me/${c.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"
+                          className="p-1 rounded hover:bg-green-100" onClick={(e) => e.stopPropagation()}>
+                          <MessageCircle className="w-3.5 h-3.5 text-green-600" />
+                        </a>
+                      )}
+                      {c.telefono && !c.whatsapp && (
+                        <a href={`tel:${c.telefono}`} className="p-1 rounded hover:bg-slate-100" onClick={(e) => e.stopPropagation()}>
+                          <Phone className="w-3.5 h-3.5 text-slate-500" />
+                        </a>
+                      )}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Low Stock Alerts */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ color: '#4A3728' }}>
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                Stock Bajo
+              </CardTitle>
+              <Link href="/catalog" className="text-xs hover:underline" style={{ color: '#C9A040' }}>Ver catálogo →</Link>
+            </div>
+            <p className="text-xs" style={{ color: '#6B4F3A' }}>Productos con 10 unidades o menos</p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {lowStockProducts.length === 0 ? (
+              <p className="text-sm text-slate-400 px-6 py-4">Sin alertas — stock OK</p>
+            ) : (
+              <div className="divide-y">
+                {lowStockProducts.slice(0, 6).map((p) => (
+                  <Link key={p.id} href="/catalog" className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 group">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {p.imagen_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={p.imagen_url} alt={p.nombre} className="w-7 h-7 rounded object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-7 h-7 rounded bg-slate-100 flex-shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate group-hover:text-amber-700" style={{ color: '#4A3728' }}>{p.nombre}</p>
+                        <p className="text-xs" style={{ color: '#6B4F3A' }}>{p.categoria || '—'}</p>
+                      </div>
+                    </div>
+                    <span className={`text-xs font-bold flex-shrink-0 ml-2 px-1.5 py-0.5 rounded ${p.stock === 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {p.stock === 0 ? 'Sin stock' : `${p.stock} u.`}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Top Customers */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ color: '#4A3728' }}>
+                <Trophy className="w-4 h-4" style={{ color: '#C9A040' }} />
+                Top Clientes
+              </CardTitle>
+              <Link href="/orders" className="text-xs hover:underline" style={{ color: '#C9A040' }}>Ver órdenes →</Link>
+            </div>
+            <p className="text-xs" style={{ color: '#6B4F3A' }}>Por revenue total acumulado</p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {topCustomers.length === 0 ? (
+              <p className="text-sm text-slate-400 px-6 py-4">Sin órdenes aún</p>
+            ) : (
+              <div className="divide-y">
+                {topCustomers.slice(0, 6).map((c, idx) => (
+                  <Link key={c.id} href={`/leads/${c.id}`} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 group">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="text-xs font-bold w-5 text-center flex-shrink-0" style={{ color: idx === 0 ? '#C9A040' : '#9ca3af' }}>
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate group-hover:text-amber-700" style={{ color: '#4A3728' }}>{c.empresa}</p>
+                        <p className="text-xs" style={{ color: '#6B4F3A' }}>{c.total_pedidos} pedido{c.total_pedidos !== 1 ? 's' : ''}</p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold flex-shrink-0 ml-2" style={{ color: '#4A3728' }}>
+                      {formatCurrency(c.revenue_total)}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Catalog Preview */}
       {catalogPreview.length > 0 && (
         <Card>
@@ -475,6 +658,15 @@ export default function DashboardPage() {
               >
                 {kdScraping ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />}
                 {kdScraping ? 'Importando...' : 'Importar Kairosdis'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={copyPublicCatalog}
+                className="gap-1.5 text-xs h-7"
+              >
+                {copied ? <Check className="w-3 h-3 text-green-600" /> : <Copy className="w-3 h-3" />}
+                {copied ? 'Copiado!' : 'Link público'}
               </Button>
               {kdStatus && (
                 <span className="text-xs" style={{ color: kdStatus.startsWith('✓') ? '#16a34a' : kdStatus.startsWith('Error') ? '#dc2626' : '#6B4F3A' }}>

@@ -158,6 +158,20 @@ MAYORISTA_QUERIES = [
 ]
 
 
+ML_PRODUCT_QUERIES = [
+    "sahumerios incienso",
+    "lampara sal himalaya",
+    "palo santo",
+    "fuente agua feng shui decorativa",
+    "estatua buda resina",
+    "difusor aceites esenciales",
+    "velas decorativas aromaticas",
+    "cuarzos cristales minerales",
+    "cascada humo incienso",
+    "hornillo sahumador ceramica",
+]
+
+
 def _places_text_search(api_key: str, query: str, page_token: Optional[str] = None) -> dict:
     import httpx
     url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
@@ -741,6 +755,116 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
         })
 
 
+def _run_ml_scraper_job(job_id: str):
+    """Scrape MercadoLibre public API for sellers of holistic/esoteric products."""
+    import httpx
+
+    db.update("scraper_jobs", job_id, {
+        "status": "running",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "total": len(ML_PRODUCT_QUERIES) * 2,
+        "progress": 0,
+    })
+
+    seen_sellers: set = set()
+    new_leads = 0
+    step = 0
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            for query in ML_PRODUCT_QUERIES:
+                for offset in [0, 50]:
+                    step += 1
+                    try:
+                        resp = client.get(
+                            "https://api.mercadolibre.com/sites/MLA/search",
+                            params={"q": query, "limit": 50, "offset": offset},
+                        )
+                        if resp.status_code != 200:
+                            continue
+                        results = resp.json().get("results", [])
+
+                        for item in results:
+                            seller = item.get("seller", {})
+                            seller_id = seller.get("id")
+                            if not seller_id or seller_id in seen_sellers:
+                                continue
+                            seen_sellers.add(seller_id)
+
+                            # Only established sellers
+                            rep = seller.get("seller_reputation", {})
+                            transactions = rep.get("transactions", {}).get("total", 0)
+                            if transactions < 20:
+                                continue
+
+                            nickname = seller.get("nickname") or f"ML-{seller_id}"
+                            permalink = f"https://www.mercadolibre.com.ar/perfil/{nickname}"
+
+                            # Skip if already in DB
+                            existing = db.select("leads", filters={
+                                "empresa": f"eq.{nickname}",
+                            }, limit=1)
+                            if existing:
+                                continue
+
+                            # Fetch seller detail for city/province
+                            city, state = "", ""
+                            try:
+                                time.sleep(0.1)
+                                det = client.get(f"https://api.mercadolibre.com/users/{seller_id}")
+                                if det.status_code == 200:
+                                    d = det.json()
+                                    city = (d.get("address") or {}).get("city", "") or ""
+                                    state = (d.get("address") or {}).get("state", "") or ""
+                            except Exception:
+                                pass
+
+                            record = {
+                                "empresa": nickname,
+                                "rubro": "Vendedor MercadoLibre",
+                                "ciudad": city,
+                                "provincia": state,
+                                "website": permalink,
+                                "fuente": "MercadoLibre API",
+                                "estado": "nuevo",
+                                "tipo_cliente": "mayorista",
+                                "fecha_extraccion": datetime.now(timezone.utc).date().isoformat(),
+                                "observaciones": f"Ventas ML: {transactions}",
+                            }
+                            record["score_ia"] = _score_lead(record)
+                            try:
+                                db.insert("leads", record)
+                                new_leads += 1
+                            except Exception:
+                                pass
+
+                        time.sleep(0.4)
+                    except Exception:
+                        pass
+
+                    progress = int((step / (len(ML_PRODUCT_QUERIES) * 2)) * 100)
+                    db.update("scraper_jobs", job_id, {
+                        "progress": progress,
+                        "new_found": new_leads,
+                        "total_found": len(seen_sellers),
+                    })
+
+        db.update("scraper_jobs", job_id, {
+            "status": "completed",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "progress": 100,
+            "new_found": new_leads,
+            "total_found": len(seen_sellers),
+        })
+
+    except Exception as exc:
+        db.update("scraper_jobs", job_id, {
+            "status": "failed",
+            "error_msg": str(exc),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+
 # ─────────────────────────────────────────────
 # ROUTES
 # ─────────────────────────────────────────────
@@ -987,4 +1111,28 @@ def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_run_enrichment_job, str(job_id), body.lead_ids)
 
+    return {"job_id": job_id, "status": "pending"}
+
+
+@router.post("/run-ml")
+def run_ml_scraper(background_tasks: BackgroundTasks):
+    """Scrape MercadoLibre API for wholesale buyers of holistic products."""
+    active = db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
+    if active:
+        raise HTTPException(status_code=409, detail="Ya hay un job corriendo. Esperá a que termine.")
+
+    job = db.insert("scraper_jobs", {
+        "status": "pending",
+        "queries": ["mercadolibre"],
+        "progress": 0,
+        "new_found": 0,
+        "total_found": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    job_id = job.get("id")
+    if not job_id:
+        raise HTTPException(status_code=500, detail="Failed to create job")
+
+    background_tasks.add_task(_run_ml_scraper_job, str(job_id))
     return {"job_id": job_id, "status": "pending"}
