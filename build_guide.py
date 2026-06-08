@@ -395,6 +395,51 @@ def status_badge_table(doc, statuses):
     doc.add_paragraph()
 
 
+def wizard_step_box(doc, step_num, step_title, description):
+    """Visual wizard step box."""
+    t = doc.add_table(rows=1, cols=2)
+    no_borders(t)
+
+    # Step number circle (using cell bg)
+    num_cell = t.cell(0, 0)
+    set_cell_bg(num_cell, GOLD)
+    tc = num_cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    we = OxmlElement('w:tcW')
+    we.set(qn('w:w'), '600')
+    we.set(qn('w:type'), 'dxa')
+    tcPr.append(we)
+    p = num_cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_after  = Pt(8)
+    r = p.add_run(str(step_num))
+    r.font.size      = Pt(16)
+    r.font.color.rgb = WHITE
+    r.bold           = True
+
+    # Step content
+    content_cell = t.cell(0, 1)
+    set_cell_bg(content_cell, GOLD_LIGHT)
+    p2 = content_cell.paragraphs[0]
+    p2.paragraph_format.left_indent  = Cm(0.3)
+    p2.paragraph_format.space_before = Pt(6)
+    p2.paragraph_format.space_after  = Pt(2)
+    r2 = p2.add_run(step_title)
+    r2.font.size      = Pt(11)
+    r2.font.color.rgb = BROWN_DARK
+    r2.bold           = True
+
+    p3 = content_cell.add_paragraph(description)
+    p3.paragraph_format.left_indent  = Cm(0.3)
+    p3.paragraph_format.space_before = Pt(0)
+    p3.paragraph_format.space_after  = Pt(6)
+    p3.runs[0].font.size      = Pt(9.5)
+    p3.runs[0].font.color.rgb = BROWN_MID
+
+    doc.add_paragraph()
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  DOCUMENT
 # ══════════════════════════════════════════════════════════════════════════
@@ -483,14 +528,16 @@ r_idx.font.size      = Pt(12)
 r_idx.font.color.rgb = BROWN_DARK
 
 sections_list = [
+    ('0', 'Introducción y Primeros Pasos',  'Cómo acceder, navegar y entender el sistema desde cero'),
     ('1', 'Dashboard',               'Resumen ejecutivo y métricas clave'),
-    ('2', 'Leads',                   'Base de prospectos y clientes minoristas'),
+    ('2', 'Leads',                   'Base de prospectos, detalle del contacto, tareas y notas'),
     ('3', 'Mayoristas',              'Gestión de distribuidores y proveedores'),
     ('4', 'Pipeline de Ventas',      'Tablero Kanban del embudo comercial'),
-    ('5', 'Campañas',                'Email marketing y seguimiento WhatsApp'),
+    ('5', 'Campañas',                'Crear campañas, enviar emails, métricas y seguimiento WA'),
     ('6', 'Órdenes',                 'Gestión de pedidos de principio a fin'),
-    ('7', 'Catálogo de Productos',   'Productos, precios, stock e imágenes'),
-    ('8', 'Scraper de Leads',        'Búsqueda automática y enriquecimiento'),
+    ('7', 'Catálogo de Productos',   'Productos, precios, stock, Google Sheets auto-sync'),
+    ('8', 'Scraper de Leads',        'Búsqueda automática y enriquecimiento de contactos'),
+    ('✦', 'Glosario',               'Definición de todos los términos del sistema'),
 ]
 
 for num, name, desc in sections_list:
@@ -509,6 +556,92 @@ for num, name, desc in sections_list:
     r_de = p.add_run(f'  ·  {desc}')
     r_de.font.size      = Pt(9.5)
     r_de.font.color.rgb = BROWN_MID
+
+page_break(doc)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  SECTION 0 — INTRODUCCIÓN Y PRIMEROS PASOS
+# ══════════════════════════════════════════════════════════════════════════
+
+section_header(doc, '0', 'INTRODUCCIÓN Y PRIMEROS PASOS',
+               'Cómo acceder al sistema, qué es cada sección y por dónde empezar')
+
+h2(doc, '¿Qué es el sistema Kairos CRM?')
+
+body(doc, 'Kairos CRM es el sistema de gestión comercial de Kairos Distribuidora. '
+         'Concentra en un solo lugar todo lo necesario para conseguir clientes nuevos, '
+         'comunicarse con ellos, hacer pedidos y mantener el catálogo de productos actualizado. '
+         'No hace falta instalar nada — funciona desde cualquier navegador web.')
+
+h2(doc, 'Cómo acceder')
+
+data_table(doc,
+    ['Qué', 'Dónde'],
+    [
+        ('URL del sistema',    'kairos.polkorp.com'),
+        ('Catálogo público',   'kairos.polkorp.com/public/catalog (accesible por clientes sin login)'),
+        ('Compatibilidad',     'Chrome, Edge, Firefox, Safari — en computadora, tablet o celular'),
+    ],
+    col_widths=[4.0, 11.0]
+)
+
+tip_box(doc, '💡  Guardá kairos.polkorp.com como favorito en tu navegador para acceder rápido cada día.',
+        color=GOLD)
+
+h2(doc, 'El menú lateral — cómo navegar el sistema')
+
+body(doc, 'Al ingresar al sistema verás una barra de navegación lateral en el lado izquierdo. '
+         'Desde ahí podés ir a cualquier sección con un click:')
+
+data_table(doc,
+    ['Ícono en el menú', 'Sección', 'Para qué sirve'],
+    [
+        ('🏠 Casa',           'Dashboard',    'Pantalla de inicio — resumen del negocio en tiempo real'),
+        ('👥 Personas',        'Leads',        'Lista completa de prospectos y clientes minoristas'),
+        ('🏢 Edificio',        'Mayoristas',   'Lista de distribuidores y mayoristas'),
+        ('📊 Barras',          'Pipeline',     'Vista visual del embudo de ventas en tablero Kanban'),
+        ('📣 Megáfono',        'Campañas',     'Crear y enviar emails o mensajes masivos'),
+        ('📦 Caja',            'Órdenes',      'Pedidos de clientes — desde confirmación hasta entrega'),
+        ('🛍 Bolsa',           'Catálogo',     'Productos, precios, stock y sincronización'),
+        ('🔍 Lupa',            'Scraper',      'Búsqueda automática de prospectos nuevos'),
+    ],
+    col_widths=[3.0, 3.0, 9.0]
+)
+
+h2(doc, '¿Por dónde empezar si es la primera vez?')
+
+body(doc, 'Si estás usando el sistema por primera vez, seguí este orden:')
+
+numbered(doc, 'Sección 8 — Scraper: lanzá el scraper para llenar la base con prospectos nuevos.')
+numbered(doc, 'Sección 8 — Scraper: corrí el Enriquecedor para conseguir emails de los prospectos.')
+numbered(doc, 'Sección 7 — Catálogo: cargá tus productos (manualmente o importando desde Kairosdis).')
+numbered(doc, 'Sección 7 — Catálogo: conectá tu planilla de Google Sheets para mantener los precios.')
+numbered(doc, 'Sección 5 — Campañas: creá tu primera campaña y enviala al segmento que elijas.')
+numbered(doc, 'Sección 1 — Dashboard: revisá el resumen a diario para estar al tanto del negocio.')
+
+tip_box(doc, '⚠️  Para enviar emails desde el sistema es necesario tener Brevo (ex Sendinblue) configurado. '
+             'Si los emails no llegan, contactá al administrador del sistema para verificar la configuración.',
+        color=AMBER)
+
+h2(doc, 'Conceptos básicos que vas a ver en todo el sistema')
+
+body(doc, 'Estos términos aparecen en múltiples secciones — es importante entenderlos desde el comienzo:')
+
+data_table(doc,
+    ['Término', 'Qué significa en el sistema'],
+    [
+        ('Lead',         'Un negocio o persona que podría comprar productos Kairos. Puede ser una tienda, un emprendedor, etc.'),
+        ('Estado',       'La etapa en la que está un lead en el proceso de venta: Nuevo → Contactado → Interesado → Cliente → Descartado.'),
+        ('Score IA',     'Calificación automática del 0 al 10 que el sistema le da a cada lead según cuántos datos tiene cargados.'),
+        ('Campaña',      'Un mensaje masivo enviado a un grupo de leads. Puede ser un email o una lista de links de WhatsApp.'),
+        ('Orden',        'Un pedido de compra confirmado de un cliente. Incluye productos, cantidades y precio total.'),
+        ('Catálogo',     'La lista completa de productos disponibles con precio y stock. Tiene una versión pública para clientes.'),
+        ('Enriquecer',   'Proceso automático que visita sitios web de los leads para encontrar emails y datos de contacto faltantes.'),
+        ('Pipeline',     'Vista Kanban del embudo de ventas — los leads se mueven entre columnas según avanzan en el proceso.'),
+    ],
+    col_widths=[3.0, 12.0]
+)
 
 page_break(doc)
 
@@ -568,7 +701,15 @@ section_header(doc, '2', 'LEADS',
                'Base de datos principal de prospectos y clientes minoristas')
 
 body(doc, 'Cada lead representa una tienda, local o emprendedor que puede comprar productos Kairos. '
-         'Esta sección es el corazón del CRM.')
+         'Esta sección es el corazón del CRM: es donde está toda la información de tus contactos '
+         'y desde donde se inician las comunicaciones.')
+
+tip_box(doc, '💡  ¿Cómo se agregan leads? Los leads entran al sistema de dos formas: '
+             '(1) automáticamente desde el Scraper, que busca negocios en Google Places; '
+             '(2) importando un archivo CSV con los datos. No hay un formulario para agregar '
+             'un lead de a uno — si necesitás agregar un contacto individual, usá la importación '
+             'con un CSV de una sola fila.',
+        color=BLUE)
 
 h2(doc, 'Score IA — sistema de calificación automática')
 
@@ -615,7 +756,6 @@ h2(doc, 'Acciones masivas — barra flotante')
 body(doc, 'Seleccioná uno o más leads con el checkbox. Aparece automáticamente una barra '
          'flotante en la parte inferior de la pantalla con estas acciones:')
 
-# Action table
 data_table(doc,
     ['Acción', 'Descripción', 'Requiere'],
     [
@@ -656,6 +796,109 @@ data_table(doc,
 tip_box(doc, '⚠️  Al importar, los duplicados (mismo nombre de empresa) se omiten automáticamente. '
              'El archivo debe tener encabezados en la primera fila y acepta CSV de Excel (UTF-8 o BOM).',
         color=AMBER)
+
+h2(doc, 'Crear una lista con precios para cotizar')
+
+body(doc, 'Para armar una lista de contactos con referencia de precios y enviarla a un segmento específico:')
+
+numbered(doc, 'En Leads, aplicá los filtros que necesitás: Provincia, Rubro, Estado = "Interesado", activá "Solo con email".')
+numbered(doc, 'Hacé click en "Exportar CSV" — el archivo descargado tiene nombre, empresa, teléfono, email, provincia, rubro.')
+numbered(doc, 'Abrí el CSV en Excel o Google Sheets.')
+numbered(doc, 'En el Catálogo, exportá también el CSV de productos (tiene Nombre, Precio Minorista, Precio Mayorista, Stock).')
+numbered(doc, 'Combiná ambas planillas según necesitás: copia las columnas de precios relevantes junto a los contactos.')
+numbered(doc, 'Usá la tabla resultante para enviar cotizaciones o como referencia para llamadas comerciales.')
+
+tip_box(doc, '💡  Alternativa rápida: desde la barra flotante de Leads, seleccioná los contactos, '
+             'hacé click en "Catálogo" para enviarles el link al catálogo público con todos los precios actualizados. '
+             'No requiere exportar nada.', color=GOLD)
+
+page_break(doc)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  SECTION 2B — DETALLE DEL LEAD
+# ══════════════════════════════════════════════════════════════════════════
+
+section_header(doc, '2b', 'DETALLE DEL LEAD',
+               'Ficha completa del contacto — notas, tareas y seguimiento')
+
+body(doc, 'Hacé click en el nombre de cualquier lead para abrir su ficha completa. '
+         'Esta pantalla centraliza toda la información y el historial del contacto.')
+
+h2(doc, 'Panel de información de contacto')
+
+body(doc, 'En la parte superior izquierda se muestra y puede editar toda la información del negocio:')
+
+data_table(doc,
+    ['Campo', 'Descripción', 'Editable'],
+    [
+        ('Empresa',    'Nombre del local o emprendimiento',                        'Sí'),
+        ('Teléfono',   'Número con código de área (sin 0, sin 15)',                'Sí'),
+        ('Email',      'Dirección de email del contacto',                         'Sí'),
+        ('Ciudad',     'Ciudad donde está el negocio',                            'Sí'),
+        ('Provincia',  'Provincia — usada por los filtros y campañas',            'Sí'),
+        ('Rubro',      'Tipo de negocio: holístico, sahumerios, santería, etc.',  'Sí'),
+        ('Website',    'URL del sitio web — el enriquecedor extrae datos de aquí','Sí'),
+        ('Rating',     'Calificación de Google Places (1-5 estrellas)',           'Solo lectura'),
+        ('Dirección',  'Dirección física del negocio',                            'Sí'),
+    ],
+    col_widths=[3.0, 8.5, 2.5]
+)
+
+h2(doc, 'Panel de estado y calificación')
+
+body(doc, 'El panel derecho superior permite gestionar la situación comercial del lead:')
+
+bullet(doc, 'Estado: desplegable con las 5 etapas (Nuevo / Contactado / Interesado / Cliente / Descartado).')
+bullet(doc, 'Score IA: puntaje automático calculado según los datos disponibles (no editable).')
+bullet(doc, 'Observaciones: campo de texto libre para notas internas sobre el contacto.')
+
+tip_box(doc, '💡  Las Observaciones son privadas del equipo — nunca se envían al contacto. '
+             'Usalas para registrar acuerdos verbales, preferencias de productos, mejor horario para llamar, etc.',
+        color=GOLD)
+
+h2(doc, 'Timeline de notas — actividad del contacto')
+
+body(doc, 'La sección central muestra todas las interacciones en orden cronológico:')
+
+bullet(doc, 'Cada entrada tiene fecha, hora y texto de la nota.')
+bullet(doc, 'Para agregar una nota: escribí en el campo "Nueva nota..." y hacé click en "Agregar Nota".')
+bullet(doc, 'Las notas son permanentes — útil para registrar llamadas, reuniones, respuestas de email.')
+
+h2(doc, 'Tareas y seguimiento — paso a paso')
+
+body(doc, 'La sección de tareas permite organizar el seguimiento futuro de cada lead:')
+
+numbered(doc, 'Hacé click en "Nueva Tarea".')
+numbered(doc, 'Escribí el título de la tarea (ej: "Llamar para confirmar pedido", "Enviar catálogo actualizado").')
+numbered(doc, 'Opcionalmente agregá una descripción con más detalle.')
+numbered(doc, 'Establecé una fecha de vencimiento usando el calendario.')
+numbered(doc, 'Hacé click en "Crear" — la tarea aparece en la lista.')
+numbered(doc, 'Cuando la completés, hacé click en el checkbox para marcarla como hecha.')
+
+data_table(doc,
+    ['Estado de tarea', 'Cómo se muestra'],
+    [
+        (('Pendiente',  True, AMBER), 'Fondo normal, sin tachado'),
+        (('Vencida',    True, RED),   'Fondo rojo — la fecha límite ya pasó'),
+        (('Completada', True, GREEN), 'Tachada y con checkmark verde'),
+    ],
+    col_widths=[4.0, 11.0]
+)
+
+tip_box(doc, '⚠️  Las tareas vencidas aparecen en el Dashboard como "Tareas Vencidas" con contador rojo. '
+             'Revisalas a diario para no perder seguimientos importantes.',
+        color=AMBER)
+
+h2(doc, 'Historial de órdenes del lead')
+
+body(doc, 'Al final de la ficha se listan todas las órdenes que hizo ese cliente: '
+         'número de orden, fecha, estado y monto total en ARS. '
+         'Hacé click en una orden para ver el detalle completo de productos y cantidades.')
+
+tip_box(doc, '💡  Desde esta pantalla también podés crear una nueva orden directamente para este cliente '
+             'sin volver al listado de Órdenes — ahorra tiempo cuando el cliente llama para hacer un pedido.',
+        color=GOLD)
 
 page_break(doc)
 
@@ -739,7 +982,18 @@ page_break(doc)
 # ══════════════════════════════════════════════════════════════════════════
 
 section_header(doc, '5', 'CAMPAÑAS',
-               'Email marketing y seguimiento por WhatsApp')
+               'Email marketing, creación paso a paso, métricas y seguimiento por WhatsApp')
+
+body(doc, 'Una campaña es un mensaje enviado al mismo tiempo a un grupo de leads. '
+         'Podés elegir exactamente a quién le llega (por provincia, rubro o estado), '
+         'escribir el texto vos o usar la IA para redactarlo, y ver después '
+         'cuántos lo abrieron, cuántos hicieron click y cuántos se convirtieron en clientes.')
+
+tip_box(doc, '⚠️  Requisito previo: para enviar campañas de email, el sistema necesita '
+             'tener Brevo (ex Sendinblue) configurado con una API key válida. '
+             'Si los emails no llegan, consultá al administrador. Las campañas de WhatsApp '
+             'no requieren ninguna configuración especial — solo generan links que vos abrís.',
+        color=AMBER)
 
 h2(doc, 'Panel de métricas de campañas')
 
@@ -754,13 +1008,6 @@ data_table(doc,
     col_widths=[5.5, 9.5]
 )
 
-h2(doc, 'Crear una nueva campaña')
-
-numbered(doc, 'Hacé click en "Nueva Campaña" (botón superior derecho).')
-numbered(doc, 'Completá el nombre, tipo (email / WhatsApp) y el segmento de destinatarios.')
-numbered(doc, 'Escribí el contenido o usá el generador con IA.')
-numbered(doc, 'Programá el envío o lanzalo al instante.')
-
 h2(doc, 'Estados de una campaña')
 
 status_badge_table(doc, [
@@ -771,6 +1018,98 @@ status_badge_table(doc, [
     ('  Enviado  ', 'green'),
     ('  Cancelado  ', 'red'),
 ])
+
+h2(doc, 'Crear una nueva campaña — wizard de 3 pasos')
+
+body(doc, 'Hacé click en "Nueva Campaña" (botón superior derecho). Se abre un asistente de 3 pasos:')
+
+doc.add_paragraph()
+
+wizard_step_box(doc, 1, 'Configurar campaña',
+    'Nombre, tipo de envío y segmento de destinatarios')
+
+body(doc, 'En el primer paso configurás a quién le llega la campaña:')
+
+data_table(doc,
+    ['Campo', 'Opciones / Descripción'],
+    [
+        ('Nombre de campaña',   'Texto libre — solo visible en el CRM, no lo ve el destinatario'),
+        ('Tipo',                'Email  o  WhatsApp (genera links wa.me en lugar de emails)'),
+        ('Provincia',           'Filtrar solo leads de una provincia específica (opcional)'),
+        ('Rubro',               'Filtrar por tipo de negocio: tienda holística, sahumerios, etc. (opcional)'),
+        ('Estado del lead',     'Nuevo / Contactado / Interesado / Cliente (opcional)'),
+        ('Solo con email',      'Toggle — si está activo, excluye leads sin email registrado'),
+    ],
+    col_widths=[4.0, 11.0]
+)
+
+tip_box(doc, '💡  Si dejás todos los filtros vacíos, la campaña llega a todos los leads de la base. '
+             'Combiná filtros para segmentar con precisión: por ejemplo, "solo leads de Buenos Aires '
+             'que estén en estado Interesado y tengan email".', color=GOLD)
+
+doc.add_paragraph()
+
+wizard_step_box(doc, 2, 'Contenido del mensaje',
+    'Redactá el asunto y el cuerpo, o generá el texto con inteligencia artificial')
+
+body(doc, 'En el segundo paso escribís o generás el texto de la campaña:')
+
+bullet(doc, 'Asunto: línea de asunto del email (no aplica para WhatsApp).')
+bullet(doc, 'Cuerpo: texto del mensaje. Podés usar variables de personalización.')
+bullet(doc, 'Generá con IA: el sistema redacta asunto y cuerpo en español automáticamente según '
+            'el tipo de campaña y el segmento elegido.')
+
+data_table(doc,
+    ['Variable', 'Se reemplaza por', 'Ejemplo en el texto'],
+    [
+        ('{nombre}',  'Nombre del contacto (si está registrado)', '"Hola {nombre}, te contactamos desde Kairos..."'),
+        ('{empresa}', 'Nombre del negocio o empresa del lead',    '"Escribimos a {empresa} para presentarles..."'),
+    ],
+    col_widths=[3.0, 5.5, 7.0]
+)
+
+tip_box(doc, '💡  Podés mezclar texto generado con IA y edición manual. Generá primero y después '
+             'ajustá el tono o agregá información específica del producto que querés destacar.',
+        color=GOLD)
+
+doc.add_paragraph()
+
+wizard_step_box(doc, 3, 'Revisión y envío',
+    'Revisá el resumen, confirmá cuántos leads recibirán la campaña y enviá')
+
+body(doc, 'El tercer paso muestra un resumen antes de confirmar:')
+
+bullet(doc, 'Nombre de la campaña y tipo de envío.')
+bullet(doc, 'Contador de leads que cumplieron los filtros — sabés exactamente a cuántas personas llega.')
+bullet(doc, 'Preview del asunto y los primeros caracteres del cuerpo.')
+bullet(doc, '"Enviar Campaña": confirma y lanza el envío inmediatamente.')
+
+tip_box(doc, '⚠️  Una vez enviada, la campaña no se puede cancelar ni modificar. '
+             'Verificá el contador de destinatarios y el preview del texto antes de confirmar.',
+        color=AMBER)
+
+h2(doc, 'Ver el detalle y métricas de una campaña enviada')
+
+body(doc, 'Hacé click en el nombre de cualquier campaña para abrir su página de métricas:')
+
+data_table(doc,
+    ['Indicador', 'Qué mide', 'Cómo interpretar'],
+    [
+        (('Enviados',     True, BROWN_DARK), 'Total de emails despachados al servidor', 'Siempre igual al contador de leads al momento del envío'),
+        (('Abiertos',     True, BLUE),       'Emails que el destinatario abrió',         'Tasa de apertura normal: 20-40%'),
+        (('Clicks',       True, AMBER),      'Clicks en links dentro del email',         'Indica interés real en el contenido'),
+        (('Respondidos',  True, GREEN),      'Respuestas directas al email',             'Alto valor — requieren seguimiento personal'),
+        (('Convertidos',  True, GREEN),      'Leads que pasaron a estado Cliente',       'Métrica final de efectividad de la campaña'),
+    ],
+    col_widths=[3.0, 5.5, 6.5]
+)
+
+body(doc, 'Debajo de las métricas se muestra la tabla individual de envíos: '
+         'cada lead con su estado (enviado / abierto / click / respondido) y la fecha de cada acción.')
+
+tip_box(doc, '💡  Combiná la vista de métricas con "Seguimiento WA": usá los leads que abrieron '
+             'el email pero no respondieron para un seguimiento personalizado por WhatsApp.',
+        color=GREEN)
 
 h2(doc, 'Duplicar una campaña')
 
@@ -847,7 +1186,7 @@ page_break(doc)
 # ══════════════════════════════════════════════════════════════════════════
 
 section_header(doc, '7', 'CATÁLOGO DE PRODUCTOS',
-               'Productos, precios, stock, imágenes y exportaciones')
+               'Productos, precios, stock, imágenes y sincronización automática con Google Sheets')
 
 h2(doc, 'Agregar un producto manualmente')
 
@@ -895,23 +1234,42 @@ body(doc, 'El botón "Importar Kairosdis" scrapea kairosdis.com.ar y sincroniza 
          '(nombre, precio, imágenes). Muestra porcentaje de avance en tiempo real. '
          'Al terminar informa cuántos productos son nuevos y cuántos fueron actualizados.')
 
-h2(doc, 'Sincronizar precios desde Google Sheets — paso a paso')
+h2(doc, 'Google Sheets como catálogo maestro — sincronización automática')
 
-body(doc, 'El botón "Sync desde Sheet" lee la planilla del catálogo en Google Sheets y aplica '
-         'los cambios de precios, stock y estado al sistema en segundos. '
-         'Es la forma más rápida de actualizar precios en masa.')
+body(doc, 'La función más potente del catálogo: conectar una planilla de Google Sheets para que '
+         'sea la fuente de verdad. Cuando actualizás un precio o stock en la planilla, '
+         'el sistema lo refleja en el CRM automáticamente sin ningún paso adicional.')
 
-numbered(doc, 'En el Catálogo, hacé click en "Exportar CSV" — descarga todos los productos con sus datos actuales.')
-numbered(doc, 'Abrí el CSV en Excel o Google Sheets. En Google Sheets: Archivo → Importar → Subir el CSV.')
-numbered(doc, 'Editá los valores que necesitás: precios, stock, activo. '
-              'No modifiques la columna ID — es la clave que el sistema usa para identificar cada producto.')
-numbered(doc, 'Compartí la planilla como pública de solo lectura: '
-              '"Compartir" → "Cualquiera con el link puede ver" → rol Lector.')
-numbered(doc, 'Volvé al CRM, sección Catálogo, hacé click en "Sync desde Sheet".')
-numbered(doc, 'El sistema actualiza los productos y muestra cuántos fueron modificados y cuántos sin cambios.')
+data_table(doc,
+    ['Característica', 'Detalle'],
+    [
+        ('Sync automático',     'El sistema verifica la planilla cada 10 minutos y aplica los cambios'),
+        ('Sin intervención',    'No hace falta tocar el CRM — solo editá la planilla y esperá máx. 10 min'),
+        ('Creación de nuevos',  'Si agregás una fila nueva en la planilla, se crea el producto en el CRM'),
+        ('Matching inteligente','El sistema busca por ID primero; si no lo encuentra, busca por nombre del producto'),
+        ('Último sync visible', 'La pantalla muestra la hora del último sync y cuántos productos fueron creados/actualizados'),
+    ],
+    col_widths=[4.0, 11.0]
+)
 
-doc.add_paragraph()
-body(doc, 'Columnas que podés editar en la planilla:')
+h2(doc, 'Conectar la planilla de Google Sheets — primera vez')
+
+numbered(doc, 'En el Catálogo, hacé click en "Exportar CSV" — descarga todos los productos actuales.')
+numbered(doc, 'Abrí Google Sheets en drive.google.com. Creá una nueva hoja en blanco.')
+numbered(doc, 'Importá el CSV: Archivo → Importar → Subir → elegí el archivo descargado.')
+numbered(doc, 'Seleccioná "Reemplazar hoja de cálculo" y aceptá. Ahora tenés todos los productos con encabezados.')
+numbered(doc, 'Compartí la planilla como pública: Compartir → Cambiar a "Cualquiera con el link" → rol Lector.')
+numbered(doc, 'Copiá el link de la planilla (debe tener el formato: docs.google.com/spreadsheets/d/ID/...).')
+numbered(doc, 'En el CRM, Catálogo, hacé click en "Conectar Google Sheet" (botón dorado).')
+numbered(doc, 'Pegá el link (o el ID) de la planilla y hacé click en "Guardar y sincronizar".')
+numbered(doc, 'El sistema hace una sincronización inmediata y muestra los resultados. '
+              'Desde ahora synca automáticamente cada 10 minutos.')
+
+tip_box(doc, '✅  Una vez conectada, el botón en el Catálogo se pone verde con un checkmark y dice '
+             '"Sheet conectado". Abajo aparece el último horario de sync y cuántos productos '
+             'fueron creados o actualizados en esa pasada.', color=GREEN)
+
+h2(doc, 'Columnas que podés editar en la planilla')
 
 data_table(doc,
     ['Columna', 'Qué controla', 'Editable'],
@@ -922,14 +1280,23 @@ data_table(doc,
         (('Precio Promo',     True,  BROWN_DARK), 'Precio promocional opcional (ARS)',          ('Sí', True, GREEN)),
         (('Stock',            True,  BROWN_DARK), 'Unidades disponibles (número entero)',       ('Sí', True, GREEN)),
         (('Activo',           True,  BROWN_DARK), 'Sí = visible en catálogo  /  No = oculto',  ('Sí', True, GREEN)),
-        (('Nombre',           False, BROWN_MID),  'Solo referencia visual — no se sincroniza', ('No aplica', False, RGBColor(0x94,0xA3,0xB8))),
+        (('Nombre',           False, BROWN_MID),  'Al agregar fila nueva, usa este nombre',     ('Sí para nuevos', False, AMBER)),
+        (('Descripcion',      False, BROWN_MID),  'Al agregar fila nueva, usa esta descripción',('Sí para nuevos', False, AMBER)),
     ],
     col_widths=[3.5, 7.5, 4.0]
 )
 
-tip_box(doc, 'Lo que NO se actualiza por Sheet: nombre, descripcion, imagen y categoria. '
-             'Para cambiar esos campos hay que editar el producto manualmente desde el Catalogo.',
+tip_box(doc, '⚠️  Para agregar un producto NUEVO desde la planilla: dejá la columna ID vacía (o en 0), '
+             'completá Nombre, precios y stock. En el próximo sync el sistema lo crea automáticamente '
+             'en el CRM. Para productos existentes, no toques nunca el ID.',
         color=AMBER)
+
+h2(doc, 'Sync manual')
+
+body(doc, 'Si no querés esperar los 10 minutos automáticos:')
+
+numbered(doc, 'Hacé click en el botón "Sync ahora" en la pantalla del Catálogo.')
+numbered(doc, 'El sistema lee la planilla inmediatamente y muestra el resultado.')
 
 h2(doc, 'Exportaciones disponibles')
 
@@ -937,7 +1304,7 @@ data_table(doc,
     ['Exportación', 'Formato', 'Cómo usarla'],
     [
         ('Exportar PDF', 'PDF',  'Elegís título y qué productos incluir — descarga listo para enviar a clientes'),
-        ('Exportar CSV', 'CSV',  'Descarga todos los productos en formato compatible con Excel'),
+        ('Exportar CSV', 'CSV',  'Descarga todos los productos con nombre, precios, stock, descripción e imagen URL'),
     ],
     col_widths=[4.0, 2.5, 9.0]
 )
@@ -947,8 +1314,26 @@ h2(doc, 'Notificar clientes del catálogo')
 body(doc, '"Notificar Clientes" envía automáticamente un email con el link al catálogo público '
          'a todos los leads en estado "cliente". Al terminar muestra cuántos emails fueron encolados.')
 
-tip_box(doc, '💡  El catálogo público es accesible en kairos.polkorp.com/public/catalog — '
-             'podés compartir ese link directamente por WhatsApp sin necesidad de exportar nada.',
+h2(doc, 'El Catálogo Público — para compartir con clientes')
+
+body(doc, 'Además del catálogo interno (que ves en el CRM), existe un catálogo público '
+         'que cualquier persona puede ver sin necesitar login ni contraseña:')
+
+data_table(doc,
+    ['Característica', 'Detalle'],
+    [
+        ('URL pública',           'kairos.polkorp.com/public/catalog'),
+        ('Qué muestra',           'Todos los productos marcados como "Activo" con foto, nombre, descripción y precio minorista'),
+        ('Acceso',                'Sin usuario ni contraseña — cualquier persona con el link puede verlo'),
+        ('Cómo compartirlo',      'Copiá el link y pegalo en WhatsApp, email o Instagram directamente'),
+        ('Actualización',         'Se actualiza en tiempo real — si cambiás un precio en el CRM, el cliente lo ve al instante'),
+    ],
+    col_widths=[4.0, 11.0]
+)
+
+tip_box(doc, '💡  Podés enviar el link del catálogo público a todos tus clientes de una sola vez '
+             'usando el botón "Notificar Clientes" o seleccionando leads y usando la acción "Catálogo" '
+             'en la barra flotante.',
         color=GOLD)
 
 page_break(doc)
@@ -961,9 +1346,14 @@ page_break(doc)
 section_header(doc, '8', 'SCRAPER DE LEADS',
                'Búsqueda automática de prospectos y enriquecimiento de contactos')
 
-body(doc, 'El Scraper busca negocios potenciales en Google Places y los agrega a la base '
-         'automáticamente. El Enriquecedor visita los sitios web de los leads para extraer '
-         'emails y datos de contacto.')
+body(doc, 'El Scraper es la herramienta que llena la base de leads automáticamente. '
+         'Busca negocios en Google Places (la misma base de datos que usa Google Maps) '
+         'usando búsquedas como "tienda holística Buenos Aires" o "sahumerios Córdoba", '
+         'y guarda todos los resultados como leads nuevos en el CRM.')
+
+body(doc, 'El Enriquecedor es un segundo proceso que toma los leads ya cargados y visita '
+         'sus sitios web para encontrar datos de contacto que no estaban disponibles en Google Places: '
+         'emails, teléfonos adicionales, Instagram, WhatsApp.')
 
 h2(doc, 'Lanzar el Scraper de Google Places')
 
@@ -977,10 +1367,17 @@ tip_box(doc, '⚠️  Solo puede correr un job a la vez. Si hay uno activo, el s
              'el inicio de otro hasta que termine o se cancele.',
         color=AMBER)
 
-h2(doc, 'Enriquecer leads con email')
+h2(doc, 'Enriquecer contactos — mejorar los datos de email y redes')
 
-body(doc, '"Enriquecer con Email" toma todos los leads que tienen sitio web pero no tienen '
-         'email y los procesa automáticamente:')
+body(doc, '"Enriquecer con Email" es el proceso que visita automáticamente el sitio web de cada lead '
+         'y extrae información de contacto que no tenía. '
+         'Ideal para ejecutar después de un scraping cuando muchos leads no tienen email.')
+
+numbered(doc, 'Asegurate de haber corrido el Scraper primero para tener leads con sitio web.')
+numbered(doc, 'Hacé click en "Enriquecer con Email".')
+numbered(doc, 'El sistema procesa todos los leads que tienen website pero no tienen email.')
+numbered(doc, 'Para cada sitio visita las páginas principales buscando datos de contacto.')
+numbered(doc, 'Al terminar muestra cuántos leads recibieron datos nuevos.')
 
 data_table(doc,
     ['Dato extraído', 'De dónde lo saca'],
@@ -989,6 +1386,33 @@ data_table(doc,
         ('Instagram', 'Links a instagram.com en la página'),
         ('WhatsApp',  'Links wa.me o whatsapp.com'),
         ('Teléfono',  'Links tel:, datos estructurados, footer'),
+    ],
+    col_widths=[4.0, 11.0]
+)
+
+tip_box(doc, '💡  Después de enriquecer, los leads "Sin Email" del Dashboard van a bajar. '
+             'Revisá el Score IA de los leads — los que pasaron de rojo a verde son los que '
+             'más datos nuevos recibieron y son prioridad para la próxima campaña.',
+        color=GOLD)
+
+h2(doc, 'Flujo completo: del scraping a la campaña')
+
+flow_table(doc, [
+    ('🔍', 'Scraper'),
+    ('✉', 'Enriquecer'),
+    ('⭐', 'Filtrar'),
+    ('📢', 'Campaña'),
+    ('📱', 'Seguim. WA'),
+])
+
+data_table(doc,
+    ['Paso', 'Qué hacer'],
+    [
+        ('1 — Scraper',      'Lanzar el Scraper para agregar negocios nuevos desde Google Places'),
+        ('2 — Enriquecer',   'Correr "Enriquecer con Email" para extraer emails de los sitios web'),
+        ('3 — Filtrar',      'En Leads, activar "Solo con email", revisar scores y elegir el segmento'),
+        ('4 — Campaña',      'Crear campaña con los filtros del segmento y enviar el email'),
+        ('5 — Seguim. WA',   'Usar "Seguimiento WA" para contactar los que abrieron pero no respondieron'),
     ],
     col_widths=[4.0, 11.0]
 )
@@ -1042,7 +1466,7 @@ data_table(doc,
         ('5', 'Usar "Seguimiento WA" para contactar los que no respondieron',             'Campañas'),
         ('6', 'Mover los leads interesados en el Pipeline hasta llegar a "Cliente"',      'Pipeline'),
         ('7', 'Crear la orden cuando el cliente confirma el pedido',                      'Órdenes'),
-        ('8', 'Mantener precios y stock actualizados en el Catálogo',                     'Catálogo'),
+        ('8', 'Mantener precios y stock actualizados en el Catálogo vía Google Sheets',   'Catálogo'),
     ],
     col_widths=[1.2, 10.3, 3.5]
 )
@@ -1056,19 +1480,33 @@ faqs = [
      'Sí. El diseño es responsivo. En pantallas chicas la tabla de leads se convierte en tarjetas '
      'apiladas y el Pipeline/Órdenes scrollean horizontalmente.'),
     ('¿Cómo actualizo los precios de muchos productos a la vez?',
-     'Usá "Sync desde Sheet" en el Catálogo. Actualizá los precios en la planilla de Google Sheets '
-     'y sincronizá con un click.'),
+     'Conectá una planilla de Google Sheets desde el Catálogo. Una vez conectada, editá los precios '
+     'directamente en la planilla y el sistema los aplica automáticamente cada 10 minutos.'),
+    ('¿Cómo creo una campaña de email para un segmento específico?',
+     'En Campañas → Nueva Campaña. En el Paso 1 aplicá los filtros (Provincia, Rubro, Estado, '
+     'Solo con email). En el Paso 2 escribí o generá el texto con IA. En el Paso 3 revisá '
+     'la cantidad de destinatarios y enviá.'),
     ('¿El scraper agrega duplicados?',
      'No. Antes de insertar un lead, verifica que no exista ya una empresa con el mismo nombre y '
      'tipo de cliente.'),
-    ('¿Cómo sé si un email llegó?',
-     'Desde el detalle de una campaña podés ver enviados, abiertos y clicks. '
-     'Requiere que Brevo esté configurado correctamente.'),
+    ('¿Cómo sé si un email llegó y fue abierto?',
+     'Desde el detalle de una campaña (click en el nombre) podés ver enviados, abiertos, clicks '
+     'y respondidos por lead. Requiere que Brevo esté configurado correctamente.'),
     ('¿Cómo le mando el catálogo a un cliente específico?',
-     'Desde Leads, seleccioná ese lead, hacé click en "Catálogo" en la barra flotante y enviá '
-     'el email con el link. También podés exportar el PDF y adjuntarlo manualmente.'),
+     'Desde Leads, seleccioná ese lead, hacé click en "Catálogo" en la barra flotante. '
+     'También podés exportar el PDF del Catálogo y adjuntarlo manualmente por WhatsApp.'),
+    ('¿Cómo mejoro los datos de mis contactos?',
+     'Usá el Enriquecedor en la sección Scraper → "Enriquecer con Email". '
+     'El sistema visita los sitios web de los leads y extrae emails, teléfonos e Instagram automáticamente.'),
+    ('¿Cómo armo una lista con precios para cotizar?',
+     'Filtrá los leads en la sección Leads (por provincia, rubro, estado), activá "Solo con email" '
+     'y exportá el CSV. Luego exportá también el CSV del Catálogo. Combiná ambos en Excel '
+     'o enviá el link del catálogo público directo por WhatsApp.'),
     ('¿Qué pasa si el scraper se cuelga?',
      'Tiene timeout automático de 30 minutos. También podés cancelarlo manualmente desde el historial.'),
+    ('¿Cómo registro que hablé con un lead?',
+     'Abrí el detalle del lead (click en su nombre), bajá a "Timeline de notas" y agregá una nota '
+     'con el resumen de la conversación. Así queda registrado con fecha y hora.'),
 ]
 
 for q, a in faqs:
@@ -1087,6 +1525,85 @@ for q, a in faqs:
     set_left_indent(pa, 0.8)
     ra = pa.add_run(a)
     ra.font.size = Pt(9.5)
+
+page_break(doc)
+
+# ══════════════════════════════════════════════════════════════════════════
+#  GLOSARIO
+# ══════════════════════════════════════════════════════════════════════════
+
+section_header(doc, '✦', 'GLOSARIO',
+               'Definición de todos los términos técnicos y de negocio del sistema')
+
+body(doc, 'Si en algún momento no entendés un término al usar el sistema, buscalo acá:')
+
+data_table(doc,
+    ['Término', 'Definición'],
+    [
+        ('Brevo (ex Sendinblue)',
+         'Servicio externo de envío de emails masivos. El CRM lo usa para enviar campañas. '
+         'Sin Brevo configurado, las campañas de email no llegan.'),
+        ('CRM',
+         'Customer Relationship Management — sistema de gestión de relaciones con clientes. '
+         'Permite registrar y seguir todos los contactos y oportunidades de venta.'),
+        ('CSV',
+         'Comma-Separated Values — formato de planilla de texto plano compatible con Excel y Google Sheets. '
+         'Se usa para importar/exportar leads y productos en masa.'),
+        ('Dashboard',
+         'Pantalla de inicio del sistema con un resumen visual del estado del negocio en tiempo real.'),
+        ('Email de campaña',
+         'Email enviado masivamente a un grupo de leads. Diferente a un email individual — '
+         'se personaliza con variables como {nombre} y {empresa}.'),
+        ('Embudo de ventas',
+         'El proceso por etapas desde que un contacto es Nuevo hasta que se convierte en Cliente. '
+         'El Pipeline muestra el embudo en formato visual Kanban.'),
+        ('Enriquecimiento',
+         'Proceso automático que visita el sitio web de cada lead y extrae emails, teléfonos, '
+         'Instagram y WhatsApp que no estaban registrados.'),
+        ('Google Places',
+         'Base de datos de negocios de Google (la misma que usa Google Maps). '
+         'El Scraper busca prospectos nuevos en esta base.'),
+        ('Google Sheets',
+         'Planilla de cálculo en la nube de Google (similar a Excel online). '
+         'El catálogo puede sincronizarse automáticamente desde una planilla de Sheets.'),
+        ('Job (trabajo)',
+         'Una tarea en ejecución en segundo plano: el Scraper corre como un "job". '
+         'Se puede ver su progreso y cancelarlo desde el historial.'),
+        ('Kanban',
+         'Método visual de gestión con columnas y tarjetas. El Pipeline y las Órdenes usan tableros Kanban.'),
+        ('Lead',
+         'Un contacto o prospecto — negocio que podría comprar productos Kairos. '
+         'Cada lead tiene empresa, teléfono, email, ciudad, provincia y rubro.'),
+        ('Mayorista',
+         'Distribuidor o proveedor que compra en volumen. Se gestiona igual que los leads '
+         'pero en su propia sección con listas de precios mayoristas.'),
+        ('Pipeline',
+         'Vista del embudo de ventas en formato Kanban. Muestra los leads organizados '
+         'en columnas según su estado comercial.'),
+        ('Rubro',
+         'Tipo de negocio del lead: tienda holística, sahumerios, santería, etc. '
+         'Se usa como filtro para segmentar campañas.'),
+        ('Score IA',
+         'Puntaje del 0 al 10 que el sistema calcula automáticamente según cuántos datos '
+         'tiene el lead: verde (7-10), amarillo (4-6), rojo (0-3).'),
+        ('Scraper',
+         'Programa que busca negocios automáticamente en Google Places y los agrega a la base de leads.'),
+        ('Segmento',
+         'Grupo de leads filtrados por criterios (provincia, rubro, estado, tiene email). '
+         'Las campañas se envían a un segmento.'),
+        ('Sync / Sincronizar',
+         'Proceso de actualización automática entre el CRM y un sistema externo (Google Sheets). '
+         'Los cambios en la planilla se aplican al CRM en el próximo ciclo de sync.'),
+        ('Tasa de apertura',
+         'Porcentaje de destinatarios que abrieron el email. Una tasa normal es 20-40%.'),
+        ('Toggle',
+         'Interruptor de on/off en la interfaz — un botón que se activa o desactiva con un click.'),
+        ('{empresa} / {nombre}',
+         'Variables de personalización en el texto de emails. El sistema las reemplaza '
+         'automáticamente con el nombre real de cada destinatario.'),
+    ],
+    col_widths=[4.0, 11.0]
+)
 
 # ── FOOTER NOTE ────────────────────────────────────────────────────────────
 doc.add_paragraph()
