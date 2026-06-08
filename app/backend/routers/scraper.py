@@ -380,25 +380,17 @@ def _scrape_website(url: str) -> dict:
         return result
 
     base_url = url.rstrip("/")
-    # Try contact pages first (more likely to have email), then homepage fallback
+    # Contact pages first (most likely to have email), then homepage as fallback
     pages_to_try = [
         base_url + "/contacto",
         base_url + "/contactanos",
         base_url + "/contact",
-        base_url + "/contact-us",
-        base_url + "/sobre-nosotros",
-        base_url + "/nosotros",
-        base_url + "/acerca-de",
-        base_url + "/acerca",
-        base_url + "/empresa",
-        base_url + "/quienes-somos",
         base_url + "/pages/contact",       # Shopify
         base_url + "/pages/contactanos",   # Shopify
-        base_url + "/pages/nosotros",
-        base_url + "/pages/acerca-de",
         base_url + "/paginas/contacto",    # Tiendanube
-        base_url + "/info",
-        base_url,                          # homepage last — largest, try only if needed
+        base_url + "/nosotros",
+        base_url + "/pages/nosotros",
+        base_url,                          # homepage last
     ]
 
     HEAD_BYTES = 80_000    # first 80KB covers <head> JSON-LD, meta, and nav
@@ -406,7 +398,7 @@ def _scrape_website(url: str) -> dict:
     SMALL_PAGE = HEAD_BYTES + TAIL_BYTES   # pages under this → read fully
 
     try:
-        with httpx.Client(timeout=12, follow_redirects=True) as client:
+        with httpx.Client(timeout=8, follow_redirects=True) as client:
             for page_url in pages_to_try:
                 try:
                     # Stream response — read up to TAIL_BYTES past SMALL_PAGE limit
@@ -557,8 +549,8 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                                 limit=1,
                             )
                             if not existing:
-                                db.insert("leads", record)
-                                results.append(record)
+                                inserted = db.insert("leads", record)
+                                results.append({**record, "id": inserted.get("id")})
                         except Exception:
                             results.append(record)
 
@@ -587,9 +579,9 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
             "total_found": len(seen_ids),
         })
 
-        # Auto-start enrichment if new leads with websites were found
-        leads_with_website = [r for r in results if r.get("website")]
-        if leads_with_website:
+        # Auto-enrich only the NEW leads that have websites (fast, targeted)
+        new_lead_ids = [str(r["id"]) for r in results if r.get("id") and r.get("website")]
+        if new_lead_ids:
             try:
                 enrich_job = db.insert("scraper_jobs", {
                     "status": "pending",
@@ -601,7 +593,7 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                 })
                 enrich_job_id = enrich_job.get("id")
                 if enrich_job_id:
-                    _run_enrichment_job(str(enrich_job_id), None)
+                    _run_enrichment_job(str(enrich_job_id), new_lead_ids)
             except Exception:
                 pass
 
@@ -629,7 +621,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                 "website": "neq.",
                 "or": "(email.is.null,email.eq.)",
                 "order": "id.asc",
-                "limit": 5000,
+                "limit": 300,
             })
 
         total = len(all_leads)
@@ -778,7 +770,7 @@ def run_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
     return start_scraper(body, background_tasks)
 
 
-STUCK_JOB_TIMEOUT_MINUTES = 20
+STUCK_JOB_TIMEOUT_MINUTES = 90
 
 
 def _auto_fail_stuck_jobs(jobs: list) -> list:
