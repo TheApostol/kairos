@@ -5,7 +5,7 @@ import { useScraperStatus } from '@/contexts/ScraperStatusContext'
 import { Loader2 } from 'lucide-react'
 
 export default function ScraperBanner() {
-  const { isRunning, progress, currentQuery } = useScraperStatus()
+  const { isRunning, progress, currentQuery, jobType } = useScraperStatus()
   const pathname = usePathname()
   const router = useRouter()
 
@@ -19,7 +19,9 @@ export default function ScraperBanner() {
       <div className="px-4 py-3 flex items-center gap-3">
         <Loader2 className="w-4 h-4 text-emerald-600 animate-spin flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-slate-800">Scraper corriendo — {progress}%</p>
+          <p className="text-xs font-semibold text-slate-800">
+            {jobType === 'enrichment' ? 'Enriqueciendo' : 'Scraper corriendo'} — {progress}%
+          </p>
           {currentQuery && (
             <p className="text-xs text-slate-500 truncate mt-0.5">{currentQuery}</p>
           )}
