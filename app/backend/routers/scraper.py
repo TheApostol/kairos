@@ -676,7 +676,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             # select_all paginates in batches of 1000 so memory stays low.
             candidates = db.select_all(
                 "leads",
-                filters={"website": "neq."},
+                filters={"website": "not.is.null"},
                 select_cols="id,empresa,website,email,telefono,instagram,whatsapp,rating,reviews_count,score_ia",
             )
             all_leads = [

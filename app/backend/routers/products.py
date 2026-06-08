@@ -196,22 +196,44 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
         textColor=MID_GRAY,
     )
 
-    # Prefetch all external images in parallel so we don't block the PDF build
+    may_price_style = ParagraphStyle(
+        "MayPrice",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=10,
+        textColor=PRIMARY,
+    )
+
+    def _fmt_price(val):
+        try:
+            return f"$ {float(val):,.0f}"
+        except (TypeError, ValueError):
+            return None
+
+    # Prefetch all external images in parallel — deduplicated, with a hard timeout
+    # Use False as sentinel for "fetched but failed" so we don't retry inline
     image_cache: dict[str, bytes | None] = {}
-    http_urls = [
+    http_urls = list({
         p.get("imagen_url", "")
         for p in products
         if (p.get("imagen_url") or "").startswith("http")
-    ]
+    })
     if http_urls:
+        from concurrent.futures import TimeoutError as FuturesTimeoutError
         with ThreadPoolExecutor(max_workers=8) as pool:
             futures = {pool.submit(_fetch_image_bytes, url): url for url in http_urls}
-            for future in as_completed(futures, timeout=20):
-                url = futures[future]
-                try:
-                    image_cache[url] = future.result()
-                except Exception:
-                    image_cache[url] = None
+            try:
+                for future in as_completed(futures, timeout=20):
+                    url = futures[future]
+                    try:
+                        image_cache[url] = future.result()
+                    except Exception:
+                        image_cache[url] = None
+            except FuturesTimeoutError:
+                # Mark any not-yet-resolved URLs as failed so we don't block
+                for fut, url in futures.items():
+                    if url not in image_cache:
+                        image_cache[url] = None
 
     story = []
 
@@ -264,8 +286,12 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                 cell_content = []
 
                 img_url = p.get("imagen_url", "")
-                prefetched = image_cache.get(img_url) if img_url.startswith("http") else None
-                rl_img = _load_pdf_image(img_url, 3*cm, 3*cm, prefetched=prefetched)
+                if img_url.startswith("http") and img_url in image_cache:
+                    # Use prefetched bytes; if None (fetch failed) skip the image entirely
+                    cached = image_cache[img_url]
+                    rl_img = _load_pdf_image(img_url, 3*cm, 3*cm, prefetched=cached) if cached else None
+                else:
+                    rl_img = _load_pdf_image(img_url, 3*cm, 3*cm)
                 if rl_img:
                     cell_content.append(rl_img)
                     cell_content.append(Spacer(1, 0.2 * cm))
@@ -283,12 +309,6 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                     cell_content.append(Paragraph(f"SKU: {sku}", sku_style))
 
                 if incluir_precios:
-                    def _fmt_price(val):
-                        try:
-                            return f"$ {float(val):,.0f}"
-                        except (TypeError, ValueError):
-                            return None
-
                     precio_min = p.get("precio_minorista")
                     precio_may = p.get("precio_mayorista")
                     precio_promo = p.get("precio_promo")
@@ -305,14 +325,7 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                         cell_content.append(Paragraph("Precio minorista", price_label_style))
 
                     if may_str and precio_may != precio_min:
-                        may_style = ParagraphStyle(
-                            "MayPrice",
-                            parent=styles["Normal"],
-                            fontName="Helvetica-Bold",
-                            fontSize=10,
-                            textColor=PRIMARY,
-                        )
-                        cell_content.append(Paragraph(may_str, may_style))
+                        cell_content.append(Paragraph(may_str, may_price_style))
                         cell_content.append(Paragraph("Precio mayorista", price_label_style))
 
                 stock = p.get("stock")
@@ -322,7 +335,7 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                         stock_color = ACCENT if stock_int <= 5 else HexColor("#27ae60")
                         stock_text = f"Stock: {stock_int} unidades" if stock_int > 0 else "Sin stock"
                         stock_style = ParagraphStyle(
-                            "Stock",
+                            "StockLabel",
                             parent=styles["Normal"],
                             fontName="Helvetica",
                             fontSize=7,

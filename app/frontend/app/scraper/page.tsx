@@ -611,10 +611,15 @@ export default function ScraperPage() {
                       <AlertDialogAction
                         className="bg-red-600 hover:bg-red-700"
                         onClick={async () => {
+                          const deleted: number[] = []
                           for (const job of errorJobs) {
-                            try { await deleteScraperJob(job.id) } catch {}
+                            try {
+                              await deleteScraperJob(job.id)
+                              deleted.push(job.id)
+                            } catch {}
                           }
-                          setHistory(prev => prev.filter(j => j.estado !== 'error'))
+                          if (deleted.length > 0)
+                            setHistory(prev => prev.filter(j => !deleted.includes(j.id)))
                         }}
                       >
                         Eliminar todos
