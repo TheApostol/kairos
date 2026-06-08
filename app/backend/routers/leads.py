@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from services.supabase_client import db
+from config import settings
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -324,6 +325,63 @@ def get_lead(lead_id: str):
     except Exception:
         lead["notas"] = []
     return lead
+
+
+@router.post("/{lead_id}/send-price-list")
+def send_price_list_email(lead_id: str):
+    """Email the personalised price list PDF link to a lead."""
+    leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
+    if not leads:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    lead = leads[0]
+    email = lead.get("email", "")
+    if not email:
+        raise HTTPException(status_code=400, detail="Este lead no tiene email registrado")
+
+    if not settings.BREVO_API_KEY:
+        raise HTTPException(status_code=400, detail="BREVO_API_KEY not configured")
+
+    import httpx
+    empresa = lead.get("empresa") or "Cliente"
+    price_list_url = f"{settings.BACKEND_URL}/products/price-list/{lead_id}"
+
+    asunto = f"Lista de precios Kairos — {empresa}"
+    html_body = f"""<div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+<h2 style="color:#2d6a4f">Lista de precios actualizada</h2>
+<p>Hola <strong>{empresa}</strong>,</p>
+<p>Adjuntamos tu lista de precios personalizada con los valores mayoristas vigentes.</p>
+<p style="margin:24px 0">
+  <a href="{price_list_url}" style="display:inline-block;padding:12px 28px;background:#2d6a4f;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:15px">
+    Ver Lista de Precios
+  </a>
+</p>
+<p>Si tenés alguna consulta o querés realizar un pedido, respondé este email o contactanos directamente.</p>
+<p>Saludos,<br><strong>Equipo Kairos</strong></p>
+</div>"""
+    text_body = (
+        f"Hola {empresa},\n\n"
+        f"Tu lista de precios personalizada está disponible aquí:\n{price_list_url}\n\n"
+        f"Saludos,\nEquipo Kairos"
+    )
+
+    payload = {
+        "sender": {"name": settings.SENDER_NAME, "email": settings.SENDER_EMAIL},
+        "to": [{"email": email, "name": empresa}],
+        "subject": asunto,
+        "htmlContent": html_body,
+        "textContent": text_body,
+    }
+
+    with httpx.Client(timeout=15) as client:
+        resp = client.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={"api-key": settings.BREVO_API_KEY, "Content-Type": "application/json"},
+            json=payload,
+        )
+
+    if resp.status_code in (200, 201):
+        return {"success": True, "email": email, "empresa": empresa}
+    raise HTTPException(status_code=502, detail=f"Error al enviar email: {resp.text[:200]}")
 
 
 @router.patch("/{lead_id}")

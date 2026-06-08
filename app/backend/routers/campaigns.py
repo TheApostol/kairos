@@ -4,6 +4,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.responses import Response as RawResponse
 from pydantic import BaseModel
 
 from services.supabase_client import db
@@ -23,6 +24,8 @@ class CampaignCreate(BaseModel):
     cuerpo: str
     cuerpo_html: Optional[str] = None
     segmento: Optional[dict] = None
+    followup_1: Optional[str] = None
+    followup_2: Optional[str] = None
 
 
 class GenerateTextRequest(BaseModel):
@@ -74,8 +77,19 @@ def _send_email_brevo(to_email: str, to_name: str, subject: str, html_body: str,
 
 
 # ─────────────────────────────────────────────
-# BACKGROUND TASK
+# BACKGROUND TASKS
 # ─────────────────────────────────────────────
+
+def _personalize(template: str, lead: dict) -> str:
+    return (
+        template
+        .replace("{nombre}", lead.get("empresa") or "")
+        .replace("{empresa}", lead.get("empresa") or "")
+        .replace("{ciudad}", lead.get("ciudad") or "")
+        .replace("{provincia}", lead.get("provincia") or "")
+        .replace("{rubro}", lead.get("rubro") or "")
+    )
+
 
 def _execute_campaign(campaign_id: str):
     campaigns = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
@@ -118,36 +132,54 @@ def _execute_campaign(campaign_id: str):
             if email_dest.lower() in seen_emails:
                 continue
             seen_emails.add(email_dest.lower())
+
+        now_str = datetime.now(timezone.utc).isoformat()
         send_record = {
             "campaign_id": campaign_id,
             "lead_id": lead.get("id"),
             "estado": "pendiente",
             "email_dest": email_dest,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "send_type": "initial",
+            "created_at": now_str,
         }
 
+        # Insert first to get the ID (needed for tracking pixel URL)
+        inserted_send = db.insert("campaign_sends", send_record)
+        send_id = str(inserted_send.get("id", ""))
+
         if campaign.get("tipo") == "email" and email_dest:
+            html_body = _personalize(campaign.get("cuerpo_html") or "", lead)
+            text_body = _personalize(campaign.get("cuerpo") or "", lead)
+            subject = _personalize(campaign.get("asunto") or "", lead)
+
+            # Inject tracking pixel into HTML
+            if send_id and html_body:
+                tracking_url = f"{settings.BACKEND_URL}/campaigns/track/{campaign_id}/{send_id}"
+                pixel = f'<img src="{tracking_url}" width="1" height="1" alt="" style="display:none">'
+                html_body = html_body + pixel
+
             result = _send_email_brevo(
                 to_email=email_dest,
                 to_name=lead.get("empresa", ""),
-                subject=campaign.get("asunto", ""),
-                html_body=campaign.get("cuerpo_html", ""),
-                text_body=campaign.get("cuerpo", ""),
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
             )
             if result.get("success"):
-                send_record["estado"] = "enviado"
-                send_record["enviado_at"] = datetime.now(timezone.utc).isoformat()
+                update_data: dict = {"estado": "enviado", "enviado_at": now_str}
                 enviados += 1
             else:
-                send_record["estado"] = "error"
-                send_record["error_msg"] = result.get("error", "Unknown error")[:500]
+                update_data = {
+                    "estado": "error",
+                    "error_msg": result.get("error", "Unknown error")[:500],
+                }
                 errors += 1
         else:
-            send_record["estado"] = "enviado"
-            send_record["enviado_at"] = datetime.now(timezone.utc).isoformat()
+            update_data = {"estado": "enviado", "enviado_at": now_str}
             enviados += 1
 
-        db.insert("campaign_sends", send_record)
+        if send_id:
+            db.update("campaign_sends", send_id, update_data)
 
     db.update("campaigns", campaign_id, {
         "estado": "completada",
@@ -155,16 +187,6 @@ def _execute_campaign(campaign_id: str):
         "fecha_envio": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
-
-
-def _personalize(template: str, lead: dict) -> str:
-    return (
-        template
-        .replace("{empresa}", lead.get("empresa") or "")
-        .replace("{ciudad}", lead.get("ciudad") or "")
-        .replace("{provincia}", lead.get("provincia") or "")
-        .replace("{rubro}", lead.get("rubro") or "")
-    )
 
 
 def _run_quick_email(leads: list, asunto: str, cuerpo: str):
@@ -183,9 +205,125 @@ def _run_quick_email(leads: list, asunto: str, cuerpo: str):
         )
 
 
+def _run_process_followups():
+    now = datetime.now(timezone.utc)
+    cutoff_3d = (now - timedelta(days=3)).isoformat()
+    cutoff_7d = (now - timedelta(days=7)).isoformat()
+
+    # --- 3-day followups: sends that got no open after 3 days ---
+    sends_3d = db.raw_select("campaign_sends", {
+        "select": "id,campaign_id,lead_id,email_dest,enviado_at",
+        "estado": "eq.enviado",
+        "send_type": "eq.initial",
+        "enviado_at": f"lte.{cutoff_3d}",
+        "limit": 500,
+    })
+
+    for send in sends_3d:
+        campaign_id = send.get("campaign_id")
+        if not campaign_id:
+            continue
+        camps = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+        if not camps:
+            continue
+        campaign = camps[0]
+        followup_1 = (campaign.get("followup_1") or "").strip()
+        if not followup_1:
+            continue
+        email = send.get("email_dest", "")
+        if not email:
+            continue
+        lead_id = send.get("lead_id")
+        lead: dict = {}
+        if lead_id:
+            leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
+            if leads:
+                lead = leads[0]
+        text_body = _personalize(followup_1, lead)
+        html_body = "<p>" + text_body.replace("\n", "<br>") + "</p>"
+        _send_email_brevo(
+            to_email=email,
+            to_name=lead.get("empresa", ""),
+            subject=f"Seguimiento: {campaign.get('asunto', 'Propuesta Kairos')}",
+            html_body=html_body,
+            text_body=text_body,
+        )
+        try:
+            db.update("campaign_sends", send["id"], {"estado": "followup_1_enviado"})
+        except Exception:
+            pass
+
+    # --- 7-day followups: sends that got followup_1 but still no response ---
+    sends_7d = db.raw_select("campaign_sends", {
+        "select": "id,campaign_id,lead_id,email_dest,enviado_at",
+        "estado": "eq.followup_1_enviado",
+        "enviado_at": f"lte.{cutoff_7d}",
+        "limit": 500,
+    })
+
+    for send in sends_7d:
+        campaign_id = send.get("campaign_id")
+        if not campaign_id:
+            continue
+        camps = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+        if not camps:
+            continue
+        campaign = camps[0]
+        followup_2 = (campaign.get("followup_2") or "").strip()
+        if not followup_2:
+            continue
+        email = send.get("email_dest", "")
+        if not email:
+            continue
+        lead_id = send.get("lead_id")
+        lead = {}
+        if lead_id:
+            leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
+            if leads:
+                lead = leads[0]
+        text_body = _personalize(followup_2, lead)
+        html_body = "<p>" + text_body.replace("\n", "<br>") + "</p>"
+        _send_email_brevo(
+            to_email=email,
+            to_name=lead.get("empresa", ""),
+            subject=f"Último contacto: {campaign.get('asunto', 'Propuesta Kairos')}",
+            html_body=html_body,
+            text_body=text_body,
+        )
+        try:
+            db.update("campaign_sends", send["id"], {"estado": "followup_2_enviado"})
+        except Exception:
+            pass
+
+
 # ─────────────────────────────────────────────
 # ROUTES
 # ─────────────────────────────────────────────
+
+@router.get("/track/{campaign_id}/{send_id}")
+def track_open(campaign_id: str, send_id: str):
+    """Email open tracking pixel — called when recipient's email client loads images."""
+    try:
+        sends = db.select("campaign_sends", filters={"id": f"eq.{send_id}", "campaign_id": f"eq.{campaign_id}"}, limit=1)
+        if sends and not sends[0].get("abierto_at"):
+            now_str = datetime.now(timezone.utc).isoformat()
+            db.update("campaign_sends", send_id, {"abierto_at": now_str, "estado": "abierto"})
+            camps = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+            if camps:
+                current = int(camps[0].get("abiertos") or 0)
+                db.update("campaigns", campaign_id, {"abiertos": current + 1})
+    except Exception:
+        pass
+    # 1×1 transparent GIF
+    gif = (
+        b"\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00"
+        b"\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00"
+        b"\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02"
+        b"\x44\x01\x00\x3b"
+    )
+    return RawResponse(content=gif, media_type="image/gif",
+                       headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
 
 @router.post("/quick-send")
 def quick_send_leads(body: QuickSendRequest, background_tasks: BackgroundTasks):
@@ -248,7 +386,6 @@ def send_catalogue_to_clients(background_tasks: BackgroundTasks):
 def get_followup_whatsapp_links(dias_sin_respuesta: int = 3):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=dias_sin_respuesta)).isoformat()
 
-    # Find leads that received an email but haven't responded and the send was at least N days ago
     sent = db.raw_select("campaign_sends", {
         "select": "lead_id,enviado_at,estado",
         "estado": "eq.enviado",
@@ -292,6 +429,63 @@ def get_followup_whatsapp_links(dias_sin_respuesta: int = 3):
     return {"links": links, "total": len(links), "dias": dias_sin_respuesta}
 
 
+@router.post("/process-followups")
+def process_followups(background_tasks: BackgroundTasks):
+    """Send scheduled followup emails for unopened campaign sends."""
+    background_tasks.add_task(_run_process_followups)
+    return {"message": "Procesando seguimientos en segundo plano"}
+
+
+@router.post("/send-reengagement")
+def send_reengagement(background_tasks: BackgroundTasks, dias_inactivo: int = 30):
+    """Send re-engagement emails to dormant clients."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=dias_inactivo)).isoformat()
+
+    clientes = db.select(
+        "leads",
+        filters={"estado": "eq.cliente"},
+        select_cols="id,empresa,email,ciudad,provincia",
+        limit=5000,
+    )
+    clientes_con_email = [c for c in clientes if c.get("email")]
+
+    dormant = []
+    for lead in clientes_con_email:
+        lid = lead.get("id")
+        recent = db.raw_select("orders", {
+            "select": "id,created_at",
+            "lead_id": f"eq.{lid}",
+            "order": "created_at.desc",
+            "limit": "1",
+        })
+        if not recent or (recent[0].get("created_at") or "") < cutoff:
+            dormant.append(lead)
+
+    if not dormant:
+        return {"message": "No hay clientes dormidos", "queued": 0}
+
+    cuerpo = (
+        "Hola {empresa},\n\n"
+        "¡Hace un tiempo que no sabemos de vos! Queremos contarte que tenemos "
+        "novedades en nuestro catálogo con nuevos productos y precios actualizados.\n\n"
+        "Si querés retomar el contacto o conocer nuestras últimas propuestas, "
+        "respondé este email o contactanos directamente.\n\n"
+        "¡Esperamos verte pronto!\nEquipo Kairos"
+    )
+
+    background_tasks.add_task(
+        _run_quick_email,
+        dormant,
+        "¡Te extrañamos! Novedades Kairos para vos",
+        cuerpo,
+    )
+    return {
+        "queued": len(dormant),
+        "message": f"Enviando reactivación a {len(dormant)} clientes",
+        "dias_inactivo": dias_inactivo,
+    }
+
+
 @router.post("/{campaign_id}/duplicate")
 def duplicate_campaign(campaign_id: str):
     campaigns = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
@@ -308,6 +502,8 @@ def duplicate_campaign(campaign_id: str):
         "cuerpo": original.get("cuerpo"),
         "cuerpo_html": original.get("cuerpo_html"),
         "segmento": original.get("segmento"),
+        "followup_1": original.get("followup_1"),
+        "followup_2": original.get("followup_2"),
         "total_leads": 0,
         "enviados": 0,
         "abiertos": 0,
@@ -356,6 +552,8 @@ def create_campaign(body: CampaignCreate):
         "cuerpo": body.cuerpo,
         "cuerpo_html": body.cuerpo_html,
         "segmento": body.segmento,
+        "followup_1": body.followup_1,
+        "followup_2": body.followup_2,
         "total_leads": 0,
         "enviados": 0,
         "abiertos": 0,

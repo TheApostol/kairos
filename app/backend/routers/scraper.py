@@ -587,6 +587,24 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
             "total_found": len(seen_ids),
         })
 
+        # Auto-start enrichment if new leads with websites were found
+        leads_with_website = [r for r in results if r.get("website")]
+        if leads_with_website:
+            try:
+                enrich_job = db.insert("scraper_jobs", {
+                    "status": "pending",
+                    "queries": ["enrichment"],
+                    "progress": 0,
+                    "new_found": 0,
+                    "total_found": 0,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+                enrich_job_id = enrich_job.get("id")
+                if enrich_job_id:
+                    _run_enrichment_job(str(enrich_job_id), None)
+            except Exception:
+                pass
+
     except Exception as exc:
         db.update("scraper_jobs", job_id, {
             "status": "failed",

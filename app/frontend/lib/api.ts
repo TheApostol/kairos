@@ -258,4 +258,16 @@ export function getPriceListUrl(leadId: string | number) {
   return getApiUrl(`/products/price-list/${leadId}`)
 }
 
+export async function sendPriceListByEmail(leadId: string | number) {
+  return apiFetch(`/leads/${leadId}/send-price-list`, { method: 'POST' })
+}
+
+export async function processFollowups() {
+  return apiFetch('/campaigns/process-followups', { method: 'POST' })
+}
+
+export async function sendReengagement(diasInactivo: number = 30) {
+  return apiFetch(`/campaigns/send-reengagement?dias_inactivo=${diasInactivo}`, { method: 'POST' })
+}
+
 export const API_BASE = API

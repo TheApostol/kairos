@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getCampaigns, getCampaignStats, duplicateCampaign, getFollowupWhatsappLinks } from '@/lib/api'
+import { getCampaigns, getCampaignStats, duplicateCampaign, getFollowupWhatsappLinks, processFollowups, sendReengagement } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +20,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Megaphone, Mail, TrendingUp, Users, Plus, Loader2, Copy, MessageCircle, ExternalLink } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Megaphone, Mail, TrendingUp, Users, Plus, Loader2, Copy, MessageCircle, ExternalLink, RefreshCw, UserCheck } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -92,7 +99,12 @@ export default function CampaignsPage() {
   const [waDialogOpen, setWaDialogOpen] = useState(false)
   const [waLinks, setWaLinks] = useState<WaLink[]>([])
   const [waLoading, setWaLoading] = useState(false)
-  const [waLoaded, setWaLoaded] = useState(false)
+  const [waDias, setWaDias] = useState('3')
+
+  // Action states
+  const [processingFollowups, setProcessingFollowups] = useState(false)
+  const [sendingReengagement, setSendingReengagement] = useState(false)
+  const [actionMsg, setActionMsg] = useState('')
 
   useEffect(() => {
     Promise.all([getCampaigns(), getCampaignStats()])
@@ -115,19 +127,69 @@ export default function CampaignsPage() {
     }
   }
 
-  const handleOpenWaFollowup = async () => {
+  const loadWaLinks = async (dias: string) => {
+    setWaLoading(true)
+    try {
+      const res = await getFollowupWhatsappLinks(Number(dias))
+      setWaLinks(res?.links ?? [])
+    } catch {
+      setWaLinks([])
+    } finally {
+      setWaLoading(false)
+    }
+  }
+
+  const handleOpenWaFollowup = () => {
     setWaDialogOpen(true)
-    if (!waLoaded) {
-      setWaLoading(true)
-      try {
-        const res = await getFollowupWhatsappLinks(3)
-        setWaLinks(res?.links ?? [])
-        setWaLoaded(true)
-      } catch {
-        setWaLinks([])
-      } finally {
-        setWaLoading(false)
-      }
+    loadWaLinks(waDias)
+  }
+
+  const handleWaDiasChange = (val: string) => {
+    setWaDias(val)
+    loadWaLinks(val)
+  }
+
+  const handleOpenAll = () => {
+    waLinks.forEach((link) => window.open(link.url, '_blank', 'noopener,noreferrer'))
+  }
+
+  const handleCopyAll = async () => {
+    const text = waLinks.map((l) => `${l.empresa}: ${l.url}`).join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      setActionMsg('Links copiados al portapapeles')
+      setTimeout(() => setActionMsg(''), 2500)
+    } catch {
+      // clipboard not available
+    }
+  }
+
+  const handleProcessFollowups = async () => {
+    setProcessingFollowups(true)
+    setActionMsg('')
+    try {
+      const res = await processFollowups()
+      setActionMsg(res?.message || 'Seguimientos procesados')
+    } catch {
+      setActionMsg('Error al procesar seguimientos')
+    } finally {
+      setProcessingFollowups(false)
+      setTimeout(() => setActionMsg(''), 4000)
+    }
+  }
+
+  const handleSendReengagement = async () => {
+    if (!confirm('¿Enviar emails de reactivación a clientes sin pedidos en los últimos 30 días?')) return
+    setSendingReengagement(true)
+    setActionMsg('')
+    try {
+      const res = await sendReengagement(30)
+      setActionMsg(res?.message || `${res?.queued ?? 0} emails encolados`)
+    } catch {
+      setActionMsg('Error al enviar reactivación')
+    } finally {
+      setSendingReengagement(false)
+      setTimeout(() => setActionMsg(''), 4000)
     }
   }
 
@@ -171,19 +233,38 @@ export default function CampaignsPage() {
           <h1 className="text-2xl font-bold text-slate-900">Campañas</h1>
           <p className="text-slate-500 mt-1">Gestión de campañas de email y WhatsApp</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleProcessFollowups}
+            disabled={processingFollowups}
+            className="gap-2 border-blue-400 text-blue-700 hover:bg-blue-50"
+          >
+            {processingFollowups
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <RefreshCw className="w-4 h-4" />}
+            Enviar seguimientos
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSendReengagement}
+            disabled={sendingReengagement}
+            className="gap-2 border-violet-400 text-violet-700 hover:bg-violet-50"
+          >
+            {sendingReengagement
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <UserCheck className="w-4 h-4" />}
+            Reactivar clientes
+          </Button>
           <Button
             variant="outline"
             onClick={handleOpenWaFollowup}
             className="gap-2 border-green-600 text-green-700 hover:bg-green-50"
           >
             <MessageCircle className="w-4 h-4" />
-            {waLoaded
-              ? `Seguimiento WA (${waLinks.length} pendientes)`
-              : waLoading
-                ? 'Seguimiento WA (cargando...)'
-                : 'Seguimiento WA'
-            }
+            Seguimiento WA
           </Button>
           <Button onClick={() => router.push('/campaigns/new')} className="gap-2">
             <Plus className="w-4 h-4" />
@@ -191,6 +272,12 @@ export default function CampaignsPage() {
           </Button>
         </div>
       </div>
+
+      {actionMsg && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-2 rounded-lg">
+          {actionMsg}
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -330,46 +417,92 @@ export default function CampaignsPage() {
 
       {/* Seguimiento WA Dialog */}
       <Dialog open={waDialogOpen} onOpenChange={setWaDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-green-700">
               <MessageCircle className="w-5 h-5" />
               Seguimiento por WhatsApp
             </DialogTitle>
           </DialogHeader>
-          {waLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+
+          {/* Controls */}
+          <div className="flex items-center gap-3 pb-3 border-b flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-600">Sin respuesta hace más de</span>
+              <Select value={waDias} onValueChange={handleWaDiasChange}>
+                <SelectTrigger className="w-20 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 día</SelectItem>
+                  <SelectItem value="3">3 días</SelectItem>
+                  <SelectItem value="7">7 días</SelectItem>
+                  <SelectItem value="14">14 días</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          ) : waLinks.length === 0 ? (
-            <div className="text-center py-8 text-slate-500">
-              <MessageCircle className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">Sin leads pendientes de seguimiento</p>
-              <p className="text-sm text-slate-400 mt-1">No hay leads con más de 3 días sin respuesta</p>
-            </div>
-          ) : (
-            <div className="space-y-2 mt-2">
-              <p className="text-sm text-slate-500 mb-3">
-                {waLinks.length} leads con emails enviados hace más de 3 días sin respuesta
-              </p>
-              {waLinks.map((link, i) => (
-                <a
-                  key={i}
-                  href={link.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between p-3 rounded-lg bg-green-50 hover:bg-green-100 transition-colors border border-green-200 group"
+            {waLinks.length > 0 && (
+              <div className="ml-auto flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={handleCopyAll}
                 >
-                  <div>
-                    <p className="text-sm font-semibold text-green-900">{link.empresa || 'Sin nombre'}</p>
-                    {link.telefono && (
-                      <p className="text-xs text-green-700 mt-0.5">{link.telefono}</p>
-                    )}
-                  </div>
-                  <ExternalLink className="w-4 h-4 text-green-600 opacity-60 group-hover:opacity-100" />
-                </a>
-              ))}
-            </div>
+                  Copiar todos
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 text-xs bg-green-600 hover:bg-green-700"
+                  onClick={handleOpenAll}
+                >
+                  Abrir todos
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="overflow-y-auto flex-1 mt-2">
+            {waLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+              </div>
+            ) : waLinks.length === 0 ? (
+              <div className="text-center py-8 text-slate-500">
+                <MessageCircle className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                <p className="font-medium">Sin leads pendientes de seguimiento</p>
+                <p className="text-sm text-slate-400 mt-1">
+                  No hay leads con más de {waDias} día{Number(waDias) !== 1 ? 's' : ''} sin respuesta
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-slate-500 mb-3">
+                  {waLinks.length} leads — emails enviados hace más de {waDias} días sin respuesta
+                </p>
+                {waLinks.map((link, i) => (
+                  <a
+                    key={i}
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between p-3 rounded-lg bg-green-50 hover:bg-green-100 transition-colors border border-green-200 group"
+                  >
+                    <div>
+                      <p className="text-sm font-semibold text-green-900">{link.empresa || 'Sin nombre'}</p>
+                      {link.telefono && (
+                        <p className="text-xs text-green-700 mt-0.5">{link.telefono}</p>
+                      )}
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-green-600 opacity-60 group-hover:opacity-100" />
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {actionMsg && (
+            <p className="text-xs text-emerald-700 text-center pt-2 flex-shrink-0">{actionMsg}</p>
           )}
         </DialogContent>
       </Dialog>

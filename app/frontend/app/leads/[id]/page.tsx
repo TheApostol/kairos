@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { getLead, updateLead, createLeadNote, getOrders, getLeadTasks, createLeadTask, updateLeadTask, getPriceListUrl } from '@/lib/api'
+import { getLead, updateLead, createLeadNote, getOrders, getLeadTasks, createLeadTask, updateLeadTask, getPriceListUrl, sendPriceListByEmail } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -139,6 +139,8 @@ export default function LeadDetailPage() {
   const [newTaskTitulo, setNewTaskTitulo] = useState('')
   const [newTaskFecha, setNewTaskFecha] = useState('')
   const [savingTask, setSavingTask] = useState(false)
+  const [sendingPriceList, setSendingPriceList] = useState(false)
+  const [priceListMsg, setPriceListMsg] = useState('')
 
   useEffect(() => {
     Promise.all([getLead(id), getOrders({ lead_id: id }), getLeadTasks(id)])
@@ -176,6 +178,21 @@ export default function LeadDetailPage() {
       const updated = await updateLeadTask(id, task.id, { completado: !task.completado })
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, ...updated } : t)))
     } catch {}
+  }
+
+  const handleSendPriceList = async () => {
+    if (!lead?.email) return
+    setSendingPriceList(true)
+    setPriceListMsg('')
+    try {
+      await sendPriceListByEmail(id)
+      setPriceListMsg(`Lista de precios enviada a ${lead.email}`)
+    } catch {
+      setPriceListMsg('Error al enviar. Verificá que el lead tenga email.')
+    } finally {
+      setSendingPriceList(false)
+      setTimeout(() => setPriceListMsg(''), 4000)
+    }
   }
 
   const handleSave = async () => {
@@ -241,7 +258,7 @@ export default function LeadDetailPage() {
             {[lead.ciudad, lead.provincia, lead.pais].filter(Boolean).join(', ') || 'Sin ubicación'}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -256,8 +273,22 @@ export default function LeadDetailPage() {
             }}
           >
             <FileDown className="w-4 h-4 mr-2" />
-            Lista de Precios
+            Lista PDF
           </Button>
+          {lead.email && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSendPriceList}
+              disabled={sendingPriceList}
+              className="border-blue-400 text-blue-700 hover:bg-blue-50"
+            >
+              {sendingPriceList
+                ? <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                : <Mail className="w-4 h-4 mr-2" />}
+              Enviar por email
+            </Button>
+          )}
           <Button onClick={() => router.push(`/orders?lead_id=${lead.id}`)} variant="outline" size="sm">
             <ShoppingCart className="w-4 h-4 mr-2" />
             Ver Pedidos
@@ -267,6 +298,11 @@ export default function LeadDetailPage() {
             Crear Pedido
           </Button>
         </div>
+        {priceListMsg && (
+          <div className="mt-2 text-sm px-3 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+            {priceListMsg}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
