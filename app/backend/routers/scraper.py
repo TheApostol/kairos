@@ -547,7 +547,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
-        BATCH_SIZE = 200  # process in chunks to keep memory low on Render free tier
+        BATCH_SIZE = 500  # process in chunks to keep memory low on Render free tier
 
         if lead_ids:
             ids_str = ",".join(lead_ids)

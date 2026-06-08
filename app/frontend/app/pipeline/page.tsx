@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getLeads, updateLead } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
@@ -29,12 +29,12 @@ const ESTADO_LABELS: Record<Estado, string> = {
   descartado: 'Descartado',
 }
 
-const ESTADO_COLORS: Record<Estado, string> = {
-  nuevo: 'bg-slate-50 border-slate-200',
-  contactado: 'bg-blue-50 border-blue-100',
-  interesado: 'bg-amber-50 border-amber-100',
-  cliente: 'bg-emerald-50 border-emerald-100',
-  descartado: 'bg-red-50 border-red-100',
+const ESTADO_COLORS: Record<Estado, { base: string; over: string }> = {
+  nuevo:       { base: 'bg-slate-50 border-slate-200',   over: 'bg-slate-100 border-slate-400' },
+  contactado:  { base: 'bg-blue-50 border-blue-100',     over: 'bg-blue-100 border-blue-400' },
+  interesado:  { base: 'bg-amber-50 border-amber-100',   over: 'bg-amber-100 border-amber-400' },
+  cliente:     { base: 'bg-emerald-50 border-emerald-100', over: 'bg-emerald-100 border-emerald-400' },
+  descartado:  { base: 'bg-red-50 border-red-100',       over: 'bg-red-100 border-red-400' },
 }
 
 function ScoreBadge({ score }: { score?: number }) {
@@ -49,12 +49,12 @@ export default function PipelinePage() {
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
   const [moving, setMoving] = useState<number | null>(null)
+  const [dragOverCol, setDragOverCol] = useState<Estado | null>(null)
+  const dragLeadId = useRef<number | null>(null)
 
   useEffect(() => {
-    getLeads({ limit: 200 })
-      .then((data) => {
-        setLeads(data.items ?? data ?? [])
-      })
+    getLeads({ limit: 500 })
+      .then((data) => setLeads(data.items ?? data ?? []))
       .catch(() => setLeads([]))
       .finally(() => setLoading(false))
   }, [])
@@ -65,35 +65,60 @@ export default function PipelinePage() {
   }, { nuevo: [], contactado: [], interesado: [], cliente: [], descartado: [] })
 
   const moveLead = async (lead: Lead, newEstado: Estado) => {
+    if ((lead.estado ?? 'nuevo') === newEstado) return
     setMoving(lead.id)
+    // Optimistic update
+    setLeads((prev) => prev.map((l) => l.id === lead.id ? { ...l, estado: newEstado } : l))
     try {
       await updateLead(lead.id, { estado: newEstado })
-      setLeads((prev) =>
-        prev.map((l) => l.id === lead.id ? { ...l, estado: newEstado } : l)
-      )
     } catch {
-      // silent — local state unchanged on error
+      // Revert on error
+      setLeads((prev) => prev.map((l) => l.id === lead.id ? { ...l, estado: lead.estado } : l))
     } finally {
       setMoving(null)
     }
   }
 
   const prevEstado = (estado: Estado): Estado | null => {
-    const idx = ESTADOS.indexOf(estado)
-    // "descartado" has no prev in the main flow
     if (estado === 'descartado') return null
+    const idx = ESTADOS.indexOf(estado)
     return idx > 0 ? ESTADOS[idx - 1] : null
   }
 
   const nextEstado = (estado: Estado): Estado | null => {
-    const idx = ESTADOS.indexOf(estado)
-    // "descartado" has no next in the main flow
     if (estado === 'descartado') return null
-    // "cliente" is the last main stage before descartado
     const mainStages: Estado[] = ['nuevo', 'contactado', 'interesado', 'cliente']
     const mainIdx = mainStages.indexOf(estado)
     if (mainIdx === -1) return null
     return mainIdx < mainStages.length - 1 ? mainStages[mainIdx + 1] : null
+  }
+
+  // ── Drag handlers ──────────────────────────────────────────────
+  const onDragStart = (leadId: number) => {
+    dragLeadId.current = leadId
+  }
+
+  const onDragOver = (e: React.DragEvent, estado: Estado) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverCol(estado)
+  }
+
+  const onDragLeave = () => setDragOverCol(null)
+
+  const onDrop = (e: React.DragEvent, targetEstado: Estado) => {
+    e.preventDefault()
+    setDragOverCol(null)
+    const id = dragLeadId.current
+    if (!id) return
+    const lead = leads.find((l) => l.id === id)
+    if (lead) moveLead(lead, targetEstado)
+    dragLeadId.current = null
+  }
+
+  const onDragEnd = () => {
+    dragLeadId.current = null
+    setDragOverCol(null)
   }
 
   return (
@@ -102,8 +127,8 @@ export default function PipelinePage() {
         <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>
           Pipeline de Ventas
         </h1>
-        <p className="mt-1" style={{ color: '#6B4F3A' }}>
-          {loading ? 'Cargando...' : `${leads.length} lead${leads.length !== 1 ? 's' : ''} en total`}
+        <p className="mt-1 text-sm" style={{ color: '#6B4F3A' }}>
+          {loading ? 'Cargando...' : `${leads.length} lead${leads.length !== 1 ? 's' : ''} en total · arrastrá las tarjetas para moverlas`}
         </p>
       </div>
 
@@ -116,10 +141,15 @@ export default function PipelinePage() {
           <style>{`.pipeline-col { min-width: 220px; flex-shrink: 0; } @media (min-width: 1024px) { .pipeline-col { min-width: unset; flex-shrink: unset; } }`}</style>
           {ESTADOS.map((estado) => {
             const colLeads = byEstado[estado]
+            const isOver = dragOverCol === estado
+            const colors = ESTADO_COLORS[estado]
             return (
               <div
                 key={estado}
-                className={`pipeline-col rounded-xl border-2 ${ESTADO_COLORS[estado]} p-3`}
+                className={`pipeline-col rounded-xl border-2 transition-colors p-3 ${isOver ? colors.over : colors.base}`}
+                onDragOver={(e) => onDragOver(e, estado)}
+                onDragLeave={onDragLeave}
+                onDrop={(e) => onDrop(e, estado)}
               >
                 {/* Column header */}
                 <div className="flex items-center justify-between mb-3">
@@ -131,9 +161,14 @@ export default function PipelinePage() {
                   </span>
                 </div>
 
+                {/* Drop hint */}
+                {isOver && (
+                  <div className="mb-2 border-2 border-dashed border-current rounded-lg h-14 opacity-40" />
+                )}
+
                 {/* Cards */}
                 <div className="space-y-2">
-                  {colLeads.length === 0 ? (
+                  {colLeads.length === 0 && !isOver ? (
                     <div className="text-center py-8 text-slate-400 text-xs">
                       Sin leads
                     </div>
@@ -146,11 +181,13 @@ export default function PipelinePage() {
                       return (
                         <Card
                           key={lead.id}
-                          className="cursor-pointer hover:shadow-md transition-shadow bg-white"
+                          draggable
+                          onDragStart={() => onDragStart(lead.id)}
+                          onDragEnd={onDragEnd}
+                          className="cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow bg-white select-none"
                           onClick={() => router.push(`/leads/${lead.id}`)}
                         >
                           <CardContent className="p-3">
-                            {/* Company name */}
                             <p
                               className="text-sm font-semibold leading-tight mb-1 truncate"
                               style={{ color: '#4A3728' }}
@@ -158,21 +195,18 @@ export default function PipelinePage() {
                               {lead.empresa}
                             </p>
 
-                            {/* Location */}
                             {(lead.ciudad || lead.provincia) && (
                               <p className="text-xs text-slate-500 truncate mb-1.5">
                                 {[lead.ciudad, lead.provincia].filter(Boolean).join(', ')}
                               </p>
                             )}
 
-                            {/* Phone */}
                             {lead.telefono && (
                               <p className="text-xs text-slate-400 truncate mb-1.5">
                                 {lead.telefono}
                               </p>
                             )}
 
-                            {/* Score + action buttons */}
                             <div
                               className="flex items-center justify-between mt-2"
                               onClick={(e) => e.stopPropagation()}
@@ -188,11 +222,7 @@ export default function PipelinePage() {
                                     onClick={() => moveLead(lead, prev)}
                                     title={`Mover a ${ESTADO_LABELS[prev]}`}
                                   >
-                                    {isMoving ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    ) : (
-                                      <ChevronLeft className="h-3 w-3" />
-                                    )}
+                                    {isMoving ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronLeft className="h-3 w-3" />}
                                   </Button>
                                 )}
                                 {next && (
@@ -204,11 +234,7 @@ export default function PipelinePage() {
                                     onClick={() => moveLead(lead, next)}
                                     title={`Mover a ${ESTADO_LABELS[next]}`}
                                   >
-                                    {isMoving ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    ) : (
-                                      <ChevronRight className="h-3 w-3" />
-                                    )}
+                                    {isMoving ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronRight className="h-3 w-3" />}
                                   </Button>
                                 )}
                                 {estado !== 'descartado' && (
@@ -220,11 +246,7 @@ export default function PipelinePage() {
                                     onClick={() => moveLead(lead, 'descartado')}
                                     title="Descartar"
                                   >
-                                    {isMoving ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    ) : (
-                                      <X className="h-3 w-3" />
-                                    )}
+                                    {isMoving ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
                                   </Button>
                                 )}
                               </div>
