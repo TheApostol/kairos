@@ -205,8 +205,23 @@ def _is_valid_email(email: str) -> bool:
     )
 
 
+def _decode_cloudflare_email(encoded: str) -> str:
+    try:
+        key = int(encoded[:2], 16)
+        return "".join(chr(int(encoded[i:i+2], 16) ^ key) for i in range(2, len(encoded), 2))
+    except Exception:
+        return ""
+
+
 def _extract_from_soup(soup, result: dict) -> None:
     """Extract contact info using BeautifulSoup from parsed HTML."""
+
+    # 0. Cloudflare email protection (data-cfemail XOR encoding)
+    for el in soup.find_all(attrs={"data-cfemail": True}):
+        if not result["email"]:
+            decoded = _decode_cloudflare_email(el["data-cfemail"])
+            if decoded and _is_valid_email(decoded):
+                result["email"] = decoded
 
     # 1. JSON-LD schema.org — most reliable source (handles nested contactPoint too)
     for script in soup.find_all("script", {"type": "application/ld+json"}):
@@ -267,6 +282,22 @@ def _extract_from_soup(soup, result: dict) -> None:
             if val:
                 result["telefono"] = val.strip()
 
+    # 3b. CSS class/ID scan for email and phone containers
+    if not result["email"]:
+        for el in soup.find_all(class_=re.compile(r'\b(e-?mail|correo|contacto?)\b', re.I)):
+            emails = EMAIL_REGEX.findall(el.get_text(" "))
+            valid = [e for e in emails if _is_valid_email(e)]
+            if valid:
+                result["email"] = valid[0]
+                break
+
+    if not result["telefono"]:
+        for el in soup.find_all(class_=re.compile(r'\b(tel[eé]?fono?|phone|cel(ular)?|whatsapp)\b', re.I)):
+            m = PHONE_TEXT_REGEX.search(el.get_text(" "))
+            if m and len(re.sub(r'\D', '', m.group())) >= 8:
+                result["telefono"] = m.group().strip()
+                break
+
     # 4. All <a> tags — mailto, tel, instagram, whatsapp
     for a in soup.find_all("a", href=True):
         href = str(a.get("href", ""))
@@ -286,6 +317,8 @@ def _extract_from_soup(soup, result: dict) -> None:
             wa = WA_REGEX.search(href)
             if wa:
                 result["whatsapp"] = wa.group(1)
+                if not result["telefono"]:
+                    result["telefono"] = "+" + wa.group(1)
 
     # 5. Priority zones: footer / contact sections
     if not result["email"]:
@@ -301,22 +334,37 @@ def _extract_from_soup(soup, result: dict) -> None:
                 result["email"] = valid[0]
                 break
 
+    # 5b. Phone-prefix label scan: "Tel:", "Cel:", "WhatsApp:" in plain elements
+    if not result["telefono"]:
+        for el in soup.find_all(['p', 'li', 'span', 'div']):
+            txt = el.get_text(" ", strip=True)
+            if re.search(r'\b(tel[eé]?[f.]?|cel(ular)?|whatsapp|fax)\s*[:\-]', txt, re.I):
+                m = PHONE_TEXT_REGEX.search(txt)
+                if m and len(re.sub(r'\D', '', m.group())) >= 8:
+                    result["telefono"] = m.group().strip()
+                    break
+
     # 6. FULL page text scan — last resort, catches plain-text emails in any element
     if not result["email"]:
         full_text = soup.get_text(separator=" ")
         # Also try deobfuscated forms: "info [at] empresa.com", "info(at)empresa.com"
-        deob = re.sub(r'\s*\[at\]\s*|\s*\(at\)\s*|\s+AT\s+', '@', full_text, flags=re.IGNORECASE)
-        deob = re.sub(r'\s*\[dot\]\s*|\s*\(dot\)\s*', '.', deob, flags=re.IGNORECASE)
+        deob = re.sub(r'\s*\[at\]\s*|\s*\(at\)\s*|\s+AT\s+|\{at\}|&#64;|arroba', '@', full_text, flags=re.IGNORECASE)
+        deob = re.sub(r'\s*\[dot\]\s*|\s*\(dot\)\s*|\{dot\}|&#46;|punto', '.', deob, flags=re.IGNORECASE)
         emails = EMAIL_REGEX.findall(deob)
         valid = [e for e in emails if _is_valid_email(e)]
         if valid:
             result["email"] = valid[0]
 
-    # 7. Phone: scan tel: hrefs then full HTML string
+    # 7. Phone: scan tel: hrefs then full-text PHONE_TEXT_REGEX
     if not result["telefono"]:
         tel_matches = TEL_HREF_REGEX.findall(str(soup))
         if tel_matches:
             result["telefono"] = tel_matches[0].strip()
+
+    if not result["telefono"]:
+        phone_m = PHONE_TEXT_REGEX.search(soup.get_text(" "))
+        if phone_m and len(re.sub(r'\D', '', phone_m.group())) >= 8:
+            result["telefono"] = phone_m.group().strip()
 
 
 def _scrape_website(url: str) -> dict:
@@ -337,11 +385,18 @@ def _scrape_website(url: str) -> dict:
         base_url + "/contacto",
         base_url + "/contactanos",
         base_url + "/contact",
+        base_url + "/contact-us",
         base_url + "/sobre-nosotros",
         base_url + "/nosotros",
+        base_url + "/acerca-de",
+        base_url + "/acerca",
+        base_url + "/empresa",
         base_url + "/quienes-somos",
         base_url + "/pages/contact",       # Shopify
         base_url + "/pages/contactanos",   # Shopify
+        base_url + "/pages/nosotros",
+        base_url + "/pages/acerca-de",
+        base_url + "/paginas/contacto",    # Tiendanube
         base_url + "/info",
         base_url,                          # homepage last — largest, try only if needed
     ]
@@ -547,14 +602,17 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
-        BATCH_SIZE = 500  # process in chunks to keep memory low on Render free tier
-
         if lead_ids:
             ids_str = ",".join(lead_ids)
             all_leads = db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
         else:
-            all_leads = db.raw_select("leads", {"select": "*", "website": "neq.", "limit": BATCH_SIZE})
-            all_leads = [l for l in all_leads if not l.get("email")]
+            all_leads = db.raw_select("leads", {
+                "select": "id,empresa,website,email,telefono,instagram,whatsapp",
+                "website": "neq.",
+                "or": "(email.is.null,email.eq.)",
+                "order": "id.asc",
+                "limit": 5000,
+            })
 
         total = len(all_leads)
         enriched_count = 0
