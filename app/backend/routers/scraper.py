@@ -455,17 +455,44 @@ def _extract_from_soup(soup, result: dict) -> None:
                     result["telefono"] = "+" + wa.group(1)
 
     # 5. Priority zones: footer / contact sections
-    if not result["email"]:
+    if not result["email"] or not result["telefono"]:
         priority_zones = (
             soup.find_all("footer")
-            + soup.find_all(class_=re.compile(r"footer|contact|contacto|pie|bottom|sidebar", re.I))
-            + soup.find_all(id=re.compile(r"footer|contact|contacto|pie|bottom|sidebar", re.I))
+            + soup.find_all(class_=re.compile(r"footer|cont[aá]ct|contacto|contáctenos|pie|bottom|sidebar", re.I))
+            + soup.find_all(id=re.compile(r"footer|cont[aá]ct|contacto|contáctenos|pie|bottom|sidebar", re.I))
         )
         for zone in priority_zones:
-            emails = EMAIL_REGEX.findall(zone.get_text(" "))
-            valid = [e for e in emails if _is_valid_email(e)]
-            if valid:
-                result["email"] = valid[0]
+            zone_text = zone.get_text(" ")
+            if not result["email"]:
+                emails = EMAIL_REGEX.findall(zone_text)
+                valid = [e for e in emails if _is_valid_email(e)]
+                if valid:
+                    result["email"] = valid[0]
+            if not result["telefono"]:
+                m = PHONE_TEXT_REGEX.search(zone_text)
+                if m and len(re.sub(r'\D', '', m.group())) >= 8:
+                    result["telefono"] = m.group().strip()
+            if result["email"] and result["telefono"]:
+                break
+
+    # 5c. Heading-based "Contáctenos" / "Contacto" section scanner
+    if not result["email"] or not result["telefono"]:
+        for heading in soup.find_all(['h1','h2','h3','h4','h5','h6','p','span'],
+                                      string=re.compile(r'cont[aá]ct', re.I)):
+            parent = heading.find_parent(['section', 'div', 'article', 'footer', 'aside'])
+            if not parent:
+                continue
+            parent_text = parent.get_text(" ")
+            if not result["email"]:
+                emails = EMAIL_REGEX.findall(parent_text)
+                valid = [e for e in emails if _is_valid_email(e)]
+                if valid:
+                    result["email"] = valid[0]
+            if not result["telefono"]:
+                m = PHONE_TEXT_REGEX.search(parent_text)
+                if m and len(re.sub(r'\D', '', m.group())) >= 8:
+                    result["telefono"] = m.group().strip()
+            if result["email"] and result["telefono"]:
                 break
 
     # 5b. Phone-prefix label scan: "Tel:", "Cel:", "WhatsApp:" in plain elements
@@ -517,6 +544,7 @@ def _scrape_website(url: str) -> dict:
     # Try contact pages first (more likely to have email), then homepage fallback
     pages_to_try = [
         base_url + "/contacto",
+        base_url,                          # homepage second — most AR sites have Contáctenos in footer
         base_url + "/contactanos",
         base_url + "/contact",
         base_url + "/contact-us",
@@ -532,7 +560,6 @@ def _scrape_website(url: str) -> dict:
         base_url + "/pages/acerca-de",
         base_url + "/paginas/contacto",    # Tiendanube
         base_url + "/info",
-        base_url,                          # homepage last — largest, try only if needed
     ]
 
     HEAD_BYTES = 80_000    # first 80KB covers <head> JSON-LD, meta, and nav
