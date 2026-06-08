@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle } from 'lucide-react'
+import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Zap } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -85,6 +85,7 @@ export default function ScraperPage() {
   const [enrichJobId, setEnrichJobId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cancellingId, setCancellingId] = useState<number | null>(null)
+  const autoCombinedRef = useRef(false)
 
   const cancelJob = async (jobId: number) => {
     setCancellingId(jobId)
@@ -142,6 +143,11 @@ export default function ScraperPage() {
     } catch {}
   }
 
+  const startCombined = async () => {
+    autoCombinedRef.current = true
+    await startScraper()
+  }
+
   const startScraper = async () => {
     setScraperState('running')
     setScraperError('')
@@ -172,6 +178,11 @@ export default function ScraperPage() {
             setCurrentQuery('Completado')
             setLogLines((prev) => [...prev, `✓ Encontrados: ${data.total_found ?? 0} · Nuevos: ${data.new_found ?? 0}`])
             fetchHistory()
+            if (autoCombinedRef.current) {
+              autoCombinedRef.current = false
+              setLogLines((prev) => [...prev, '→ Iniciando enriquecimiento automático...'])
+              setTimeout(() => startEnrichment(), 1500)
+            }
           }
           if (data.error) {
             es.close()
@@ -261,11 +272,39 @@ export default function ScraperPage() {
     <div className="space-y-6 max-w-4xl">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Scraper de Leads</h1>
-        <p className="text-slate-500 mt-1">Extrae y enriquece leads automáticamente</p>
+        <p className="text-slate-500 mt-1">Busca tiendas holísticas, esotéricas y de sahumerios en toda Argentina</p>
       </div>
 
       {/* Action Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* Todo en uno */}
+        <Card className={`border-2 transition-all sm:col-span-1 ${anyJobRunning ? 'border-amber-400' : 'border-amber-200 hover:border-amber-400'}`} style={{ background: 'linear-gradient(135deg,#fffbeb,#fef3c7)' }}>
+          <CardContent className="pt-6 pb-6">
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+                {anyJobRunning ? (
+                  <Loader2 className="w-8 h-8 text-amber-600 animate-spin" />
+                ) : (
+                  <Zap className="w-8 h-8 text-amber-600" />
+                )}
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">Todo en uno</h3>
+                <p className="text-xs text-slate-500 mt-1">Scraper + enriquecimiento automático</p>
+              </div>
+              <Button
+                onClick={startCombined}
+                disabled={anyJobRunning}
+                className="w-full gap-2 text-white"
+                style={{ backgroundColor: '#C9A040' }}
+                size="lg"
+              >
+                {anyJobRunning ? <><Loader2 className="w-5 h-5 animate-spin" />Corriendo...</> : <><Zap className="w-5 h-5" />Iniciar Todo</>}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Scraper */}
         <Card className={`border-2 transition-all ${isScraperRunning ? 'border-green-400' : 'border-transparent hover:border-slate-200'}`}>
           <CardContent className="pt-6 pb-6">

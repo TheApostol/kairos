@@ -41,26 +41,160 @@ IRRELEVANT_PLACE_TYPES = {
 }
 
 DEFAULT_QUERIES = [
-    "sahumerios Argentina",
+    # ── Nacional ──
+    "tienda sahumerios Argentina",
     "tienda holistica Argentina",
-    "santeria Argentina",
+    "tienda esoterica Argentina",
+    "tienda new age Argentina",
     "aromaterapia tienda Argentina",
-    "velas de soja tienda Argentina",
-    "esencias aromáticas tienda Argentina",
-    "inciensos tienda Argentina",
-    "productos esotericos tienda Argentina",
-    "reiki shop Argentina",
-    "tienda espiritual Argentina",
-    "sahumerios Buenos Aires",
-    "sahumerios Córdoba",
-    "sahumerios Rosario",
-    "sahumerios Mendoza",
-    "tienda holistica Tucumán",
-    "tienda holistica Salta",
-    "tienda holistica Mar del Plata",
+    "velas aromaticas tienda Argentina",
+    "lamparas de sal himalaya tienda Argentina",
+    "bazar espiritual Argentina",
+    "santeria Argentina",
+    "cristales y piedras tienda Argentina",
+    "tienda naturista aromaterapia Argentina",
+    "defumacion hierbas tienda Argentina",
+    "decoracion feng shui tienda Argentina",
+    "fuente agua decorativa tienda Argentina",
+
+    # ── Buenos Aires (CABA) ──
+    "tienda sahumerios Buenos Aires",
+    "tienda holistica Buenos Aires",
+    "tienda esoterica Buenos Aires",
+    "aromaterapia Buenos Aires",
+    "cristales piedras Buenos Aires",
+    "bazar espiritual Buenos Aires",
+    "tienda naturista Buenos Aires",
+    "santeria Buenos Aires",
+    "libreria esoterica Buenos Aires",
+    "velas aromaticas Buenos Aires",
+    "lampara sal himalaya Buenos Aires",
+    "tienda new age Buenos Aires",
+
+    # ── GBA ──
+    "tienda holistica Quilmes",
+    "tienda esoterica Morón",
+    "sahumerios La Matanza",
+    "tienda holistica Lomas de Zamora",
+    "sahumerios Avellaneda",
+    "tienda holistica San Martín Buenos Aires",
+    "tienda esoterica Tigre",
+    "sahumerios Lanús",
+    "tienda holistica Merlo Buenos Aires",
+    "tienda esoterica Florencio Varela",
+    "sahumerios Berazategui",
+    "tienda holistica Moreno Buenos Aires",
+    "tienda esoterica Almirante Brown",
+    "sahumerios Tres de Febrero",
+
+    # ── Córdoba ──
+    "tienda sahumerios Córdoba",
+    "tienda holistica Córdoba",
+    "tienda esoterica Córdoba",
+    "aromaterapia Córdoba",
+    "cristales piedras Córdoba",
+    "tienda naturista Córdoba",
+    "santeria Córdoba",
+    "lampara sal himalaya Córdoba",
+    "tienda holistica Río Cuarto",
+    "sahumerios Rio Cuarto",
+    "tienda holistica Villa María Córdoba",
+
+    # ── Rosario ──
+    "tienda sahumerios Rosario",
+    "tienda holistica Rosario",
+    "tienda esoterica Rosario",
+    "aromaterapia Rosario",
+    "cristales Rosario",
+    "lampara sal himalaya Rosario",
+
+    # ── Mendoza ──
+    "tienda sahumerios Mendoza",
+    "tienda holistica Mendoza",
+    "tienda esoterica Mendoza",
+    "aromaterapia Mendoza",
+    "cristales piedras Mendoza",
+
+    # ── La Plata ──
+    "tienda sahumerios La Plata",
     "tienda holistica La Plata",
-    "tienda esoterica Neuquén",
+    "tienda esoterica La Plata",
+
+    # ── Mar del Plata ──
+    "tienda sahumerios Mar del Plata",
+    "tienda holistica Mar del Plata",
+    "tienda esoterica Mar del Plata",
+
+    # ── Tucumán ──
+    "tienda sahumerios Tucumán",
+    "tienda holistica Tucumán",
+    "tienda esoterica Tucumán",
+    "tienda holistica San Miguel de Tucumán",
+
+    # ── Salta ──
+    "tienda sahumerios Salta",
+    "tienda holistica Salta",
+    "tienda esoterica Salta",
+
+    # ── Santa Fe ──
+    "tienda sahumerios Santa Fe",
+    "tienda holistica Santa Fe",
     "tienda esoterica Santa Fe",
+
+    # ── Neuquén ──
+    "tienda sahumerios Neuquén",
+    "tienda holistica Neuquén",
+
+    # ── Bahía Blanca ──
+    "tienda sahumerios Bahia Blanca",
+    "tienda holistica Bahia Blanca",
+
+    # ── Corrientes ──
+    "tienda holistica Corrientes",
+    "sahumerios Corrientes",
+
+    # ── Chaco ──
+    "tienda holistica Resistencia",
+    "sahumerios Resistencia",
+
+    # ── Misiones ──
+    "tienda holistica Posadas",
+    "sahumerios Posadas",
+
+    # ── Jujuy ──
+    "tienda sahumerios Jujuy",
+    "tienda holistica Jujuy",
+
+    # ── San Juan ──
+    "tienda holistica San Juan",
+    "sahumerios San Juan",
+
+    # ── Entre Ríos ──
+    "tienda holistica Paraná",
+    "sahumerios Concordia",
+    "tienda holistica Gualeguaychú",
+
+    # ── Patagonia ──
+    "tienda holistica Bariloche",
+    "sahumerios Bariloche",
+    "tienda holistica Comodoro Rivadavia",
+    "tienda holistica Río Gallegos",
+    "tienda holistica Ushuaia",
+
+    # ── San Luis ──
+    "tienda holistica San Luis",
+
+    # ── Catamarca ──
+    "tienda holistica Catamarca",
+
+    # ── Santiago del Estero ──
+    "tienda holistica Santiago del Estero",
+
+    # ── La Rioja ──
+    "tienda holistica La Rioja",
+
+    # ── Formosa ──
+    "tienda holistica Formosa",
 ]
 
 MAYORISTA_QUERIES = [
@@ -760,7 +894,7 @@ def run_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
     return start_scraper(body, background_tasks)
 
 
-STUCK_JOB_TIMEOUT_MINUTES = 20
+STUCK_JOB_TIMEOUT_MINUTES = 180
 
 
 def _auto_fail_stuck_jobs(jobs: list) -> list:
