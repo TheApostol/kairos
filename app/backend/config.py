@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
     GOOGLE_API_KEY: str = ""
     GOOGLE_SHEET_ID: str = ""
+    GOOGLE_SERVICE_ACCOUNT_JSON: str = ""
 
     class Config:
         env_file = ".env"

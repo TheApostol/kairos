@@ -229,6 +229,10 @@ export async function syncFromGoogleSheet(sheetId?: string) {
   })
 }
 
+export async function exportCatalogToSheet() {
+  return apiFetch('/products/export-to-sheet', { method: 'POST' })
+}
+
 export function getProductsCsvUrl() {
   return getApiUrl('/products/export-csv')
 }

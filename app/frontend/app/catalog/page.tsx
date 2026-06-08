@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { getProducts, getProductCategories, createProduct, updateProduct, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, getProductsCsvUrl, getSheetConfig, setSheetId } from '@/lib/api'
+import { getProducts, getProductCategories, createProduct, updateProduct, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, getProductsCsvUrl, getSheetConfig, setSheetId, exportCatalogToSheet } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -160,6 +160,7 @@ export default function CatalogPage() {
   const [sheetInput, setSheetInput] = useState('')
   const [showSheetConfig, setShowSheetConfig] = useState(false)
   const [savingSheet, setSavingSheet] = useState(false)
+  const [exportingToSheet, setExportingToSheet] = useState(false)
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<{created:number,updated:number,skipped:number}|null>(null)
 
@@ -404,6 +405,30 @@ export default function CatalogPage() {
             {sheetSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             {sheetSyncing ? 'Sincronizando...' : 'Sync ahora'}
           </Button>
+          {sheetId && (
+            <Button
+              variant="outline"
+              onClick={async () => {
+                setExportingToSheet(true)
+                setSheetSyncResult('')
+                try {
+                  const r = await exportCatalogToSheet()
+                  setSheetSyncResult(`✓ ${r.exported ?? 0} productos exportados al Sheet`)
+                } catch (e: unknown) {
+                  setSheetSyncResult(`Error: ${e instanceof Error ? e.message : 'No se pudo exportar'}`)
+                } finally {
+                  setExportingToSheet(false)
+                  setTimeout(() => setSheetSyncResult(''), 6000)
+                }
+              }}
+              disabled={exportingToSheet}
+              className="gap-2"
+              title="Escribe todos los productos actuales en la planilla de Google Sheets"
+            >
+              {exportingToSheet ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {exportingToSheet ? 'Exportando...' : 'Poblar Sheet'}
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => setShowSheetConfig(true)}
@@ -780,16 +805,21 @@ export default function CatalogPage() {
           <div className="space-y-4 py-2">
             <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800 space-y-1">
               <p className="font-semibold">¿Cómo funciona?</p>
-              <p>Una vez configurado, cualquier producto que agregues o edites en la planilla se sincroniza automáticamente al catálogo cada 10 minutos.</p>
+              <p>Al conectar, el sistema escribe todos los productos actuales en la planilla automáticamente. Después, cualquier cambio que hagas en la planilla se sincroniza al catálogo cada 10 minutos.</p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 space-y-1">
+              <p className="font-semibold">Requisito para auto-poblar la planilla</p>
+              <p>Para que el sistema pueda <em>escribir</em> en la planilla necesita una cuenta de servicio de Google (variable <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> en el servidor). Compartí la planilla con el email de esa cuenta de servicio como Editor.</p>
+              <p>Sin cuenta de servicio, el sistema solo <em>lee</em> de la planilla — tenés que poblarla manualmente exportando el CSV desde el Catálogo.</p>
             </div>
             <div className="space-y-2 text-sm">
-              <p className="font-medium text-slate-700">Formato de la planilla:</p>
+              <p className="font-medium text-slate-700">Columnas de la planilla:</p>
               <div className="rounded-md bg-slate-50 border p-3 font-mono text-xs text-slate-600 overflow-x-auto whitespace-nowrap">
-                ID · Nombre* · Categoría · Descripción · Precio Minorista · Precio Mayorista · Precio Promo · Stock · Activo · Imagen URL
+                ID · SKU · Nombre* · Categoría · Descripción · Precio Minorista · Precio Mayorista · Precio Promo · Stock · Activo · Imagen URL
               </div>
               <p className="text-slate-500">
-                * Solo <strong>Nombre</strong> es obligatorio para crear un producto nuevo. Los demás campos son opcionales.<br />
-                La planilla debe estar compartida como <strong>"Cualquiera con el link puede ver"</strong>.
+                * Solo <strong>Nombre</strong> es obligatorio para crear un producto nuevo.<br />
+                La planilla debe estar compartida como <strong>"Cualquiera con el link puede ver"</strong> (o con la cuenta de servicio como Editor).
               </p>
             </div>
             <div className="space-y-1.5">
@@ -815,7 +845,8 @@ export default function CatalogPage() {
                   setLastResult(r)
                   setProductRefresh((n) => n + 1)
                   setShowSheetConfig(false)
-                  setSheetSyncResult(`✓ Sheet conectado · ${r.created ?? 0} productos creados, ${r.updated ?? 0} actualizados`)
+                  const exportedMsg = r.exported != null ? ` · ${r.exported} productos escritos en la planilla` : ''
+                  setSheetSyncResult(`✓ Sheet conectado${exportedMsg} · ${r.created ?? 0} creados, ${r.updated ?? 0} actualizados`)
                   setTimeout(() => setSheetSyncResult(''), 6000)
                 } catch (e: unknown) {
                   setSheetSyncResult(`Error: ${e instanceof Error ? e.message : 'No se pudo conectar la hoja'}`)

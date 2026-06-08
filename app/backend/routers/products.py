@@ -900,6 +900,73 @@ def _run_sheet_sync(sheet_id: str) -> dict:
     return result
 
 
+def _get_gspread_client():
+    """Return an authenticated gspread client using the service account JSON from settings, or None."""
+    from config import settings
+    sa_json = getattr(settings, "GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    if not sa_json:
+        return None
+    try:
+        import json as _json
+        import gspread
+        sa_info = _json.loads(sa_json)
+        return gspread.service_account_from_dict(sa_info)
+    except Exception as exc:
+        logger.warning("gspread auth failed: %s", exc)
+        return None
+
+
+def _write_catalog_to_sheet(sheet_id: str) -> dict:
+    """
+    Export all current products to the first worksheet of the Google Sheet.
+    Clears existing content and writes headers + all product rows.
+    Requires GOOGLE_SERVICE_ACCOUNT_JSON and the sheet shared with the service account email.
+    """
+    gc = _get_gspread_client()
+    if gc is None:
+        raise HTTPException(
+            status_code=400,
+            detail="GOOGLE_SERVICE_ACCOUNT_JSON no está configurado en el servidor.",
+        )
+
+    products = db.select_all("products", select_cols=",".join(SHEET_EXPORT_COLUMNS))
+
+    try:
+        sh = gc.open_by_key(sheet_id)
+        ws = sh.sheet1
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se pudo abrir la hoja. Verificá que la compartiste con el email de la cuenta de servicio: {exc}",
+        )
+
+    headers = ["ID", "SKU", "Nombre", "Categoría", "Descripción",
+               "Precio Minorista", "Precio Mayorista", "Precio Promo",
+               "Stock", "Activo", "Imagen URL"]
+
+    rows = [headers]
+    for p in products:
+        rows.append([
+            str(p.get("id") or ""),
+            p.get("sku") or "",
+            p.get("nombre") or "",
+            (p.get("categoria") or "").replace("-", " ").title(),
+            p.get("descripcion") or "",
+            p.get("precio_minorista") if p.get("precio_minorista") is not None else "",
+            p.get("precio_mayorista") if p.get("precio_mayorista") is not None else "",
+            p.get("precio_promo") if p.get("precio_promo") is not None else "",
+            p.get("stock") if p.get("stock") is not None else "",
+            "Sí" if p.get("activo") is not False else "No",
+            p.get("imagen_url") or "",
+        ])
+
+    ws.clear()
+    if len(rows) > 1:
+        ws.update(rows)
+
+    return {"exported": len(products)}
+
+
 @router.get("/export-csv")
 def export_products_csv():
     """Export all products as CSV — use this as the starting template for the Google Sheet."""
@@ -948,15 +1015,41 @@ class SetSheetRequest(BaseModel):
 
 @router.post("/set-sheet")
 def set_sheet_id(body: SetSheetRequest):
-    """Save the Google Sheet ID and immediately run the first sync."""
-    raw = body.sheet_id.strip()
-    # Accept full URL like https://docs.google.com/spreadsheets/d/SHEET_ID/edit
+    """
+    Save the Google Sheet ID. If a service account is configured and the sheet is
+    shared with it, export the current catalog to the sheet first so it's pre-populated,
+    then run a sync to confirm. Without a service account, just runs the sync (reads from sheet).
+    """
     import re as _re
+    raw = body.sheet_id.strip()
     m = _re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", raw)
     sheet_id = m.group(1) if m else raw
     _sheet_store["sheet_id"] = sheet_id
+
+    exported: Optional[int] = None
+    if _get_gspread_client() is not None:
+        try:
+            export_res = _write_catalog_to_sheet(sheet_id)
+            exported = export_res.get("exported")
+        except Exception as exc:
+            logger.warning("Auto-export to sheet failed: %s", exc)
+
     result = _run_sheet_sync(sheet_id)
+    result["exported"] = exported
     return {"sheet_id": sheet_id, **result}
+
+
+@router.post("/export-to-sheet")
+def export_catalog_to_sheet():
+    """
+    Write the entire current catalog to the connected Google Sheet.
+    Requires GOOGLE_SERVICE_ACCOUNT_JSON configured and the sheet shared with
+    the service account email.
+    """
+    sheet_id = _get_sheet_id()
+    if not sheet_id:
+        raise HTTPException(status_code=400, detail="No hay hoja configurada. Guardá el Sheet ID primero.")
+    return _write_catalog_to_sheet(sheet_id)
 
 
 class SheetSyncRequest(BaseModel):
