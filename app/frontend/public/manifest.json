@@ -1,0 +1,44 @@
+{
+  "name": "Kairos Distribuidora CRM",
+  "short_name": "Kairos CRM",
+  "description": "CRM interno para Kairos Distribuidora",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1a0e08",
+  "theme_color": "#4A3728",
+  "scope": "/",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Leads",
+      "url": "/leads",
+      "description": "Ver lista de leads"
+    },
+    {
+      "name": "Pipeline",
+      "url": "/pipeline",
+      "description": "Pipeline de ventas"
+    },
+    {
+      "name": "Órdenes",
+      "url": "/orders",
+      "description": "Ver órdenes"
+    }
+  ]
+}
