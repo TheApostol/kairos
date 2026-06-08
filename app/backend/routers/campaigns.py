@@ -453,6 +453,11 @@ def get_campaign_analytics(campaign_id: str):
     }
 
 
+@router.get("/ai-status")
+def ai_status():
+    return {"configured": bool(settings.ANTHROPIC_API_KEY)}
+
+
 @router.post("/generate-text")
 def generate_campaign_text(body: GenerateTextRequest):
     if not settings.ANTHROPIC_API_KEY:
@@ -500,20 +505,31 @@ Consideraciones:
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2000,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
 
     raw_text = message.content[0].text.strip()
 
+    # Strip markdown code fences if Claude wrapped the JSON
+    import re as _re
+    fence_match = _re.search(r"```(?:json)?\s*([\s\S]*?)```", raw_text)
+    if fence_match:
+        raw_text = fence_match.group(1).strip()
+
     try:
         result = json.loads(raw_text)
     except json.JSONDecodeError:
-        import re
-        json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        json_match = _re.search(r"\{.*\}", raw_text, _re.DOTALL)
         if json_match:
-            result = json.loads(json_match.group())
+            try:
+                result = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                result = None
         else:
+            result = None
+
+        if not result:
             result = {
                 "asunto": "Propuesta especial para tu negocio",
                 "cuerpo": raw_text,

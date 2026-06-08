@@ -3,6 +3,8 @@ import gc
 import re
 import time
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -168,16 +170,24 @@ def _score_lead(record: dict) -> int:
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 INSTAGRAM_REGEX = re.compile(r"instagram\.com/([A-Za-z0-9._]{1,30})")
 WA_REGEX = re.compile(r"(?:wa\.me|whatsapp\.com/send\?phone=)[/\?]?(\d{6,15})")
-# Broad Argentina phone pattern: captures 8-15 digit sequences from tel: links and text
 TEL_HREF_REGEX = re.compile(r'href=["\']tel:([+\d\s\-().]{6,20})["\']', re.IGNORECASE)
-# Phone pattern in plain text: handles formats like (011) 4567-8901, 011-15-1234-5678, +54 9 11 etc.
-PHONE_TEXT_REGEX = re.compile(
+
+# Plain-text phone: catch numbers following a trigger word (most reliable in Argentine sites)
+PHONE_CONTEXT_REGEX = re.compile(
+    r'(?:Tel[eé]fono|Tel\b|Cel\.?|Celular|Fax|WhatsApp|Llamanos|Llam[aá]|'
+    r'N[uú]mero|Num\.|Contacto|Escribinos|Llam[aá]nos)[:\s]*'
+    r'([+()0-9][\d\s\-\.()/]{6,20})',
+    re.IGNORECASE,
+)
+
+# Broader bare-number pattern as last resort — 10 consecutive digit-groups typical in AR
+PHONE_BARE_REGEX = re.compile(
     r'(?<!\d)'
-    r'(?:\+54[\s\-]?)?'
-    r'(?:0?11|0?[2-9]\d{1,3})?'
-    r'[\s\-]?'
-    r'(?:15[\s\-]?)?'
-    r'\d{4}[\s\-]?\d{4}'
+    r'(?:'
+    r'\+?54[\s\-]?9?[\s\-]?(?:11|[2-9]\d{1,3})[\s\-]?\d{4}[\s\-]?\d{4}'  # intl +54
+    r'|0?(?:11|[2-9]\d{1,3})[\s\-]?\d{4}[\s\-]?\d{4}'                       # local 011...
+    r'|15[\s\-]?\d{4}[\s\-]?\d{4}'                                            # mobile 15-XXXX-XXXX
+    r')'
     r'(?!\d)'
 )
 
@@ -203,6 +213,26 @@ def _is_valid_email(email: str) -> bool:
         and not any(x in e for x in FAKE_EMAIL_FRAGMENTS)
         and len(e) >= 6
     )
+
+
+def _reassemble_split_emails(soup) -> list:
+    """
+    Detect emails split across sibling inline elements, e.g.:
+    <span>info</span><span>@</span><span>empresa.com</span>
+    Walks every parent that contains a bare '@' text node and
+    reassembles its full concatenated text, then runs EMAIL_REGEX on it.
+    """
+    found = []
+    for at_node in soup.find_all(string=re.compile(r'@')):
+        parent = at_node.parent
+        if parent is None:
+            continue
+        joined = parent.get_text(separator="")
+        emails = EMAIL_REGEX.findall(joined)
+        for e in emails:
+            if _is_valid_email(e) and e not in found:
+                found.append(e)
+    return found
 
 
 def _extract_from_soup(soup, result: dict) -> None:
@@ -318,6 +348,43 @@ def _extract_from_soup(soup, result: dict) -> None:
         if tel_matches:
             result["telefono"] = tel_matches[0].strip()
 
+    # 8. Tiendanube-specific footer (common Argentine e-commerce platform)
+    if not result["email"] or not result["telefono"]:
+        tn_footer = (
+            soup.find("footer", class_=re.compile(r"js-footer", re.I))
+            or soup.find(id=re.compile(r"js-footer", re.I))
+        )
+        if tn_footer:
+            zone_text = tn_footer.get_text(" ")
+            if not result["email"]:
+                tn_emails = [e for e in EMAIL_REGEX.findall(zone_text) if _is_valid_email(e)]
+                if tn_emails:
+                    result["email"] = tn_emails[0]
+            if not result["telefono"]:
+                ctx = PHONE_CONTEXT_REGEX.search(zone_text)
+                if ctx:
+                    result["telefono"] = ctx.group(1).strip()
+
+    # 9. Contextual phone: trigger word + number anywhere in page text
+    if not result["telefono"]:
+        page_text = soup.get_text(" ")
+        ctx_match = PHONE_CONTEXT_REGEX.search(page_text)
+        if ctx_match:
+            result["telefono"] = ctx_match.group(1).strip()
+
+    # 10. Bare phone pattern as last resort
+    if not result["telefono"]:
+        page_text = soup.get_text(" ") if "page_text" not in dir() else page_text
+        bare = PHONE_BARE_REGEX.search(page_text)
+        if bare:
+            result["telefono"] = bare.group(0).strip()
+
+    # 11. Split-email reassembly (emails broken across <span> tags)
+    if not result["email"]:
+        reassembled = _reassemble_split_emails(soup)
+        if reassembled:
+            result["email"] = reassembled[0]
+
 
 def _scrape_website(url: str) -> dict:
     import httpx
@@ -336,14 +403,25 @@ def _scrape_website(url: str) -> dict:
     pages_to_try = [
         base_url + "/contacto",
         base_url + "/contactanos",
+        base_url + "/contactate",
+        base_url + "/escribinos",
+        base_url + "/escribirnos",
         base_url + "/contact",
         base_url + "/sobre-nosotros",
         base_url + "/nosotros",
         base_url + "/quienes-somos",
-        base_url + "/pages/contact",       # Shopify
-        base_url + "/pages/contactanos",   # Shopify
+        base_url + "/acerca",
+        base_url + "/acerca-de",
+        base_url + "/donde-estamos",
+        base_url + "/ubicacion",
+        base_url + "/locales",
+        base_url + "/pages/contact",        # Shopify
+        base_url + "/pages/contactanos",    # Shopify
+        base_url + "/pages/contact-us",
+        base_url + "/pages/sobre-nosotros",
+        base_url + "/es/contacto",          # bilingual sites
         base_url + "/info",
-        base_url,                          # homepage last — largest, try only if needed
+        base_url,                           # homepage last — largest, try only if needed
     ]
 
     HEAD_BYTES = 80_000    # first 80KB covers <head> JSON-LD, meta, and nav
@@ -547,7 +625,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
-        BATCH_SIZE = 200  # process in chunks to keep memory low on Render free tier
+        BATCH_SIZE = 300
 
         if lead_ids:
             ids_str = ",".join(lead_ids)
@@ -557,41 +635,50 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             all_leads = [l for l in all_leads if not l.get("email")]
 
         total = len(all_leads)
-        enriched_count = 0
-
         db.update("scraper_jobs", job_id, {"total": total})
 
-        for i, lead in enumerate(all_leads):
+        lock = threading.Lock()
+        enriched_count = 0
+        processed_count = 0
+
+        def _process_one(lead: dict):
+            nonlocal enriched_count, processed_count
             website = lead.get("website", "")
             if not website:
-                continue
+                with lock:
+                    processed_count += 1
+                return
 
             enrich = _scrape_website(website)
             update_data = {}
-
             for field in ["email", "instagram", "whatsapp", "telefono"]:
                 if enrich.get(field) and not lead.get(field):
                     update_data[field] = enrich[field]
 
-            if update_data:
-                merged = {**lead, **update_data}
-                update_data["score_ia"] = _score_lead(merged)
-                update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-                db.update("leads", lead["id"], update_data)
-                enriched_count += 1
+            with lock:
+                processed_count += 1
+                if update_data:
+                    merged = {**lead, **update_data}
+                    update_data["score_ia"] = _score_lead(merged)
+                    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    db.update("leads", lead["id"], update_data)
+                    enriched_count += 1
 
-            del enrich, update_data
-
-            # Run GC every 25 leads to reclaim BS4 / httpx memory
-            if (i + 1) % 25 == 0:
-                gc.collect()
-
-            time.sleep(0.3)
-            progress = int(((i + 1) / max(total, 1)) * 100)
-            db.update("scraper_jobs", job_id, {
-                "progress": progress,
-                "new_found": enriched_count,
-            })
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(_process_one, lead): lead for lead in all_leads}
+            for i, future in enumerate(as_completed(futures)):
+                try:
+                    future.result()
+                except Exception:
+                    pass
+                if (i + 1) % 10 == 0:
+                    with lock:
+                        ec = enriched_count
+                        pc = processed_count
+                    progress = int((pc / max(total, 1)) * 100)
+                    db.update("scraper_jobs", job_id, {"progress": progress, "new_found": ec})
+                if (i + 1) % 50 == 0:
+                    gc.collect()
 
         del all_leads
         gc.collect()

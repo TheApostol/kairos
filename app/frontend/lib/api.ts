@@ -208,6 +208,11 @@ export async function getKairosdisScraperStatus() {
   return apiFetch('/products/scrape-kairosdis/status')
 }
 
+// AI status
+export async function checkAiStatus(): Promise<{ configured: boolean }> {
+  return apiFetch('/campaigns/ai-status')
+}
+
 // Google Sheets Sync
 export async function syncFromGoogleSheet(sheetId: string) {
   return apiFetch('/products/sync-from-sheet', {

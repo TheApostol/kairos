@@ -31,7 +31,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { getLeads, getLeadStats, getLeadRubros, getApiUrl, updateLead, quickSendLeads, generateCampaignText } from '@/lib/api'
+import { getLeads, getLeadStats, getLeadRubros, getApiUrl, updateLead, quickSendLeads, generateCampaignText, checkAiStatus } from '@/lib/api'
 import { Search, Download, ChevronLeft, ChevronRight, Loader2, Mail, MessageSquare, FileDown, Sparkles, Upload } from 'lucide-react'
 
 interface Lead {
@@ -98,6 +98,9 @@ export default function LeadsPage() {
   const [sendResult, setSendResult] = useState('')
   const [aiError, setAiError] = useState('')
 
+  // AI config status
+  const [aiConfigured, setAiConfigured] = useState<boolean | null>(null)
+
   // CSV Import
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
@@ -127,6 +130,10 @@ export default function LeadsPage() {
   }, [page, search, provincia, rubro, estado, soloEmail, soloTelefono])
 
   useEffect(() => { fetchLeads() }, [fetchLeads])
+
+  useEffect(() => {
+    checkAiStatus().then((r) => setAiConfigured(r.configured)).catch(() => setAiConfigured(false))
+  }, [])
 
   useEffect(() => {
     getLeadStats().then((s) => {
@@ -267,6 +274,11 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-6">
+      {aiConfigured === false && (
+        <div className="rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+          <strong>IA no configurada:</strong> Agregá <code className="bg-yellow-100 px-1 rounded">ANTHROPIC_API_KEY</code> en las variables de entorno de Render para habilitar la generación de campañas con IA.
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Leads</h1>
