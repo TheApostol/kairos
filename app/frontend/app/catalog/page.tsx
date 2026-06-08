@@ -149,6 +149,7 @@ export default function CatalogPage() {
   // PDF Export dialog
   const [showPdfDialog, setShowPdfDialog] = useState(false)
   const [pdfTitle, setPdfTitle] = useState('Catálogo Kairos')
+  const [pdfSelectAll, setPdfSelectAll] = useState(true)
   const [selectedForPdf, setSelectedForPdf] = useState<Set<number>>(new Set())
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [pdfError, setPdfError] = useState('')
@@ -272,9 +273,10 @@ export default function CatalogPage() {
   const handleExportPdf = async () => {
     setDownloadingPdf(true)
     setPdfError('')
-    const ids = Array.from(selectedForPdf)
     const params = new URLSearchParams({ title: pdfTitle })
-    if (ids.length > 0) ids.forEach((id) => params.append('product_ids', String(id)))
+    if (!pdfSelectAll) {
+      Array.from(selectedForPdf).forEach((id) => params.append('product_ids', String(id)))
+    }
     try {
       const res = await fetch(`${getApiUrl('/products/export-catalog')}?${params.toString()}`)
       if (!res.ok) throw new Error(await res.text())
@@ -296,6 +298,7 @@ export default function CatalogPage() {
   }
 
   const togglePdfProduct = (id: number) => {
+    setPdfSelectAll(false)
     const next = new Set(selectedForPdf)
     if (next.has(id)) next.delete(id)
     else next.add(id)
@@ -316,7 +319,9 @@ export default function CatalogPage() {
           <Button
             variant="outline"
             onClick={() => {
-              setSelectedForPdf(new Set(products.map((p) => p.id)))
+              setPdfSelectAll(true)
+              setSelectedForPdf(new Set())
+              setPdfError('')
               setShowPdfDialog(true)
             }}
             className="gap-2"
@@ -687,36 +692,42 @@ export default function CatalogPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Seleccionar productos ({selectedForPdf.size} seleccionados)</Label>
-              <div className="max-h-48 overflow-y-auto space-y-1 border rounded-md p-2">
-                {products.map((p) => (
-                  <label key={p.id} className="flex items-center gap-2 cursor-pointer py-1">
-                    <input
-                      type="checkbox"
-                      checked={selectedForPdf.has(p.id)}
-                      onChange={() => togglePdfProduct(p.id)}
-                      className="rounded"
-                    />
-                    <span className="text-sm">{p.nombre}</span>
-                  </label>
-                ))}
-              </div>
+              <Label>Productos a incluir</Label>
               <div className="flex gap-2">
                 <Button
-                  variant="ghost"
+                  variant={pdfSelectAll ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => setSelectedForPdf(new Set(products.map((p) => p.id)))}
+                  onClick={() => { setPdfSelectAll(true); setSelectedForPdf(new Set()) }}
                 >
-                  Todos
+                  Todos ({totalCount})
                 </Button>
                 <Button
-                  variant="ghost"
+                  variant={!pdfSelectAll ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => setSelectedForPdf(new Set())}
+                  onClick={() => { setPdfSelectAll(false); setSelectedForPdf(new Set(products.map((p) => p.id))) }}
                 >
-                  Ninguno
+                  Selección manual
                 </Button>
               </div>
+              {!pdfSelectAll && (
+                <div className="max-h-48 overflow-y-auto space-y-1 border rounded-md p-2 mt-1">
+                  <p className="text-xs text-slate-400 pb-1">Mostrando página actual ({products.length} productos)</p>
+                  {products.map((p) => (
+                    <label key={p.id} className="flex items-center gap-2 cursor-pointer py-1">
+                      <input
+                        type="checkbox"
+                        checked={selectedForPdf.has(p.id)}
+                        onChange={() => togglePdfProduct(p.id)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">{p.nombre}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {pdfSelectAll && (
+                <p className="text-xs text-slate-500">Se incluirán todos los {totalCount} productos activos del catálogo.</p>
+              )}
             </div>
           </div>
           {pdfError && (
@@ -724,7 +735,7 @@ export default function CatalogPage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowPdfDialog(false); setPdfError('') }}>Cancelar</Button>
-            <Button onClick={handleExportPdf} disabled={selectedForPdf.size === 0 || downloadingPdf} className="gap-2">
+            <Button onClick={handleExportPdf} disabled={(!pdfSelectAll && selectedForPdf.size === 0) || downloadingPdf} className="gap-2">
               {downloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
               {downloadingPdf ? 'Generando...' : 'Descargar PDF'}
             </Button>

@@ -588,11 +588,11 @@ def export_catalog_get(
             "activo": "eq.true",
         })
     else:
-        products = db.select(
+        products = db.select_all(
             "products",
             filters={"activo": "eq.true"},
-            order="orden.asc.nullslast,nombre.asc",
         )
+        products.sort(key=lambda p: (p.get("orden") is None, p.get("orden") or 0, p.get("nombre") or ""))
 
     if not products:
         raise HTTPException(status_code=404, detail="No products found")
@@ -616,11 +616,11 @@ def export_catalog(body: CatalogExportRequest):
             "activo": "eq.true",
         })
     else:
-        products = db.select(
+        products = db.select_all(
             "products",
             filters={"activo": "eq.true"},
-            order="orden.asc.nullslast,nombre.asc",
         )
+        products.sort(key=lambda p: (p.get("orden") is None, p.get("orden") or 0, p.get("nombre") or ""))
 
     if not products:
         raise HTTPException(status_code=404, detail="No products found")
