@@ -97,7 +97,7 @@ export default function OrderDetailPage() {
   const [downloadingInvoice, setDownloadingInvoice] = useState(false)
 
   useEffect(() => {
-    Promise.all([getOrder(id), getProducts()])
+    Promise.all([getOrder(id), getProducts({ per_page: '500' })])
       .then(([o, p]) => {
         setOrder(o)
         setItems(o.items ?? [])
@@ -124,11 +124,14 @@ export default function OrderDetailPage() {
         fecha_entrega: fechaEntrega || null,
         items: items.map((i) => ({
           product_id: i.product_id,
+          nombre: i.nombre,
           cantidad: i.cantidad,
           precio_unit: i.precio_unit,
         })),
       })
-      setOrder(updated)
+      // Backend now returns the full order; merge to keep any fields not in the response
+      setOrder((prev) => prev ? { ...prev, ...updated } : updated)
+      setItems(updated.items ?? items)
       setHasChanges(false)
     } catch {
     } finally {

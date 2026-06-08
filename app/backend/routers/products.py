@@ -563,7 +563,7 @@ def get_price_list(lead_id: str):
     if not products:
         raise HTTPException(status_code=404, detail="No products found")
 
-    es_mayorista = lead.get("estado") == "cliente"
+    es_mayorista = lead.get("tipo_cliente") == "mayorista" or lead.get("estado") == "cliente"
     pdf_bytes = _build_price_list_pdf(products, lead, es_mayorista)
     empresa_slug = (lead.get("empresa") or "cliente").lower().replace(" ", "_")[:30]
     filename = f"lista_precios_{empresa_slug}_{datetime.now().strftime('%Y%m%d')}.pdf"

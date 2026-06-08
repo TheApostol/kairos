@@ -62,9 +62,11 @@ def _build_filters(
         params["email"] = "not.is.null"
     if con_telefono is True:
         params["telefono"] = "not.is.null"
-    if score_min is not None:
+    if score_min is not None and score_max is not None:
+        params["and"] = f"(score_ia.gte.{int(score_min)},score_ia.lte.{int(score_max)})"
+    elif score_min is not None:
         params["score_ia"] = f"gte.{int(score_min)}"
-    if score_max is not None:
+    elif score_max is not None:
         params["score_ia"] = f"lte.{int(score_max)}"
     if tipo_cliente:
         params["tipo_cliente"] = f"eq.{tipo_cliente}"

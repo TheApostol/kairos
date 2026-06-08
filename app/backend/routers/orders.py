@@ -37,6 +37,7 @@ class OrderUpdate(BaseModel):
     notas: Optional[str] = None
     fecha_entrega: Optional[str] = None
     descuento: Optional[float] = None
+    items: Optional[List[OrderItemCreate]] = None
 
 
 # ─────────────────────────────────────────────
@@ -346,9 +347,11 @@ def list_orders(
         params["estado"] = f"eq.{estado}"
     if lead_id:
         params["lead_id"] = f"eq.{lead_id}"
-    if fecha_from:
+    if fecha_from and fecha_to:
+        params["and"] = f"(fecha_pedido.gte.{fecha_from},fecha_pedido.lte.{fecha_to})"
+    elif fecha_from:
         params["fecha_pedido"] = f"gte.{fecha_from}"
-    if fecha_to:
+    elif fecha_to:
         params["fecha_pedido"] = f"lte.{fecha_to}"
 
     orders = db.raw_select("orders", params)
@@ -475,29 +478,59 @@ def get_order(order_id: str):
 @router.put("/{order_id}")
 @router.patch("/{order_id}")
 def update_order(order_id: str, body: OrderUpdate):
-    orders = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
-    if not orders:
+    existing = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
+    if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
+    order = existing[0]
 
-    update_data = body.model_dump(exclude_none=True)
-    if not update_data:
-        raise HTTPException(status_code=400, detail="No fields to update")
+    update_data = body.model_dump(exclude={"items"}, exclude_none=True)
+    now = datetime.utcnow().isoformat()
 
-    update_data["updated_at"] = datetime.utcnow().isoformat()
-    updated = db.update("orders", order_id, update_data)
+    if update_data:
+        update_data["updated_at"] = now
+        db.update("orders", order_id, update_data)
 
-    # Recalculate total if discount changed
-    if "descuento" in update_data:
-        items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
-        totals = _calculate_order_totals(items, update_data["descuento"])
+    # Replace items if provided
+    if body.items is not None:
+        old_items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+        for old in old_items:
+            db.delete("order_items", old["id"])
+        for item in body.items:
+            p_unit = item.precio_unit or 0.0
+            nombre = item.nombre
+            if item.product_id:
+                prods = db.select("products", filters={"id": f"eq.{item.product_id}"}, limit=1)
+                if prods:
+                    nombre = nombre or prods[0].get("nombre", "")
+                    p_unit = p_unit or float(prods[0].get("precio_mayorista") or prods[0].get("precio_minorista") or 0)
+            db.insert("order_items", {
+                "order_id": order_id,
+                "product_id": str(item.product_id) if item.product_id else None,
+                "nombre": nombre or "Producto",
+                "cantidad": item.cantidad,
+                "precio_unit": p_unit,
+                "subtotal": round(item.cantidad * p_unit, 2),
+            })
+
+    # Recalculate totals whenever items or discount changed
+    if body.items is not None or "descuento" in update_data:
+        all_items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+        descuento = update_data.get("descuento", float(order.get("descuento") or 0))
+        totals = _calculate_order_totals(all_items, descuento)
         db.update("orders", order_id, {
             "subtotal": totals["subtotal"],
             "total": totals["total"],
+            "updated_at": now,
         })
-        updated["subtotal"] = totals["subtotal"]
-        updated["total"] = totals["total"]
 
-    return updated
+    # Return the full updated order
+    updated_order = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)[0]
+    updated_order["items"] = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+    if updated_order.get("lead_id"):
+        leads = db.select("leads", filters={"id": f"eq.{updated_order['lead_id']}"}, limit=1)
+        if leads:
+            updated_order["lead"] = {k: leads[0].get(k) for k in ["id", "empresa", "email", "telefono", "ciudad", "provincia"]}
+    return updated_order
 
 
 @router.post("/{order_id}/items")
@@ -506,13 +539,14 @@ def add_order_item(order_id: str, body: OrderItemCreate):
     if not orders:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    subtotal = round(body.cantidad * body.precio_unit, 2)
+    precio_unit = body.precio_unit or 0.0
+    subtotal = round(body.cantidad * precio_unit, 2)
     item_data = {
         "order_id": order_id,
         "product_id": body.product_id,
         "nombre": body.nombre,
         "cantidad": body.cantidad,
-        "precio_unit": body.precio_unit,
+        "precio_unit": precio_unit,
         "subtotal": subtotal,
     }
     new_item = db.insert("order_items", item_data)

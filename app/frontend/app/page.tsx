@@ -134,9 +134,9 @@ export default function DashboardPage() {
       const poll = setInterval(async () => {
         try {
           const s = await getKairosdisScraperStatus()
-          if (s.status === 'running') {
-            setKdStatus(`${s.progress ?? 0}/${s.total ?? '?'} productos`)
-          } else if (s.status === 'done') {
+          if (s.status === 'running' || s.status === 'Iniciando...' || s.status?.includes?.('%')) {
+            setKdStatus(`${s.progress ?? 0}% — ${s.total ?? 0} productos`)
+          } else if (s.status === 'completed') {
             clearInterval(poll)
             setKdScraping(false)
             setKdStatus(`✓ ${s.new ?? 0} nuevos, ${s.updated ?? 0} actualizados`)
@@ -144,10 +144,10 @@ export default function DashboardPage() {
               setCatalogTotal(res?.total ?? 0)
               setCatalogPreview(res?.items ?? [])
             }).catch(() => {})
-          } else if (s.status === 'error') {
+          } else if (s.status === 'error' || s.status === 'failed') {
             clearInterval(poll)
             setKdScraping(false)
-            setKdStatus('Error al importar')
+            setKdStatus(`Error: ${s.errors?.[0] ?? 'Error al importar'}`)
           }
         } catch { clearInterval(poll); setKdScraping(false) }
       }, 3000)
