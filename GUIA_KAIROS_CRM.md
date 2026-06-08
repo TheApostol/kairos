@@ -297,9 +297,32 @@ El botón **"Importar Kairosdis"** scrapea automáticamente kairosdis.com.ar y s
 
 ### Sincronizar precios desde Google Sheets
 
-El botón **"Sync desde Sheet"** lee una planilla de Google Sheets con precios actualizados y los aplica al catálogo. Útil para actualizar precios en masa desde Excel sin entrar al sistema producto por producto.
+El botón **"Sync desde Sheet"** lee la planilla oficial de Google Sheets del catálogo y aplica los cambios de precios, stock y estado directamente al sistema. Es la forma más rápida de actualizar precios en masa.
 
-Formato de la planilla: cada fila es un producto con columnas de precio mayorista y minorista. El sistema actualiza solo los que cambiaron e informa cuántos fueron modificados.
+#### Cómo preparar la planilla — paso a paso
+
+1. En el Catálogo, hacé click en **"Exportar CSV"** (botón superior derecho).
+2. Abrí el archivo CSV descargado en Excel o Google Sheets.
+3. Si usás Google Sheets: **Archivo → Importar → Subir** el CSV.
+4. Editá los valores que querés cambiar en estas columnas:
+
+| Columna | Qué hace |
+|---|---|
+| **ID** | Identificador del producto — **no lo modifiques nunca** |
+| **Precio Minorista** | Precio de venta al público (ARS) |
+| **Precio Mayorista** | Precio de venta a revendedores (ARS) |
+| **Precio Promo** | Precio promocional opcional (ARS) |
+| **Stock** | Unidades disponibles (número entero) |
+| **Activo** | `Sí` para visible / `No` para oculto |
+
+5. Una vez editada, la planilla debe estar **compartida como "Cualquiera con el link puede ver"**:
+   - En Google Sheets: click en "Compartir" → "Cambiar a cualquiera con el link" → rol "Lector".
+6. Volvé al CRM, sección Catálogo, y hacé click en **"Sync desde Sheet"**.
+7. El sistema informa cuántos productos fueron actualizados y cuántos no tuvieron cambios.
+
+> **Importante:** el sistema identifica cada producto por su columna **ID**. No borres ni modifiques esa columna o el sync no podrá hacer la correspondencia.
+
+> **Qué NO se actualiza por Sheet:** nombre, descripción, imagen, categoría. Para cambiar esos datos hay que editar el producto manualmente.
 
 ### Exportar el catálogo
 

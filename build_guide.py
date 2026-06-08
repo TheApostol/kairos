@@ -889,16 +889,47 @@ for i, cat in enumerate(cats):
     bullet_r.font.color.rgb = BROWN_DARK
 doc.add_paragraph()
 
-h2(doc, 'Opciones de importación y sincronización')
+h2(doc, 'Importar Kairosdis')
+
+body(doc, 'El botón "Importar Kairosdis" scrapea kairosdis.com.ar y sincroniza todos los productos '
+         '(nombre, precio, imágenes). Muestra porcentaje de avance en tiempo real. '
+         'Al terminar informa cuántos productos son nuevos y cuántos fueron actualizados.')
+
+h2(doc, 'Sincronizar precios desde Google Sheets — paso a paso')
+
+body(doc, 'El botón "Sync desde Sheet" lee la planilla del catálogo en Google Sheets y aplica '
+         'los cambios de precios, stock y estado al sistema en segundos. '
+         'Es la forma más rápida de actualizar precios en masa.')
+
+numbered(doc, 'En el Catálogo, hacé click en "Exportar CSV" — descarga todos los productos con sus datos actuales.')
+numbered(doc, 'Abrí el CSV en Excel o Google Sheets. En Google Sheets: Archivo → Importar → Subir el CSV.')
+numbered(doc, 'Editá los valores que necesitás: precios, stock, activo. '
+              'No modifiques la columna ID — es la clave que el sistema usa para identificar cada producto.')
+numbered(doc, 'Compartí la planilla como pública de solo lectura: '
+              '"Compartir" → "Cualquiera con el link puede ver" → rol Lector.')
+numbered(doc, 'Volvé al CRM, sección Catálogo, hacé click en "Sync desde Sheet".')
+numbered(doc, 'El sistema actualiza los productos y muestra cuántos fueron modificados y cuántos sin cambios.')
+
+doc.add_paragraph()
+body(doc, 'Columnas que podés editar en la planilla:')
 
 data_table(doc,
-    ['Función', 'Qué hace', 'Cuándo usarla'],
+    ['Columna', 'Qué controla', 'Editable'],
     [
-        ('Importar Kairosdis', 'Descarga todos los productos de kairosdis.com.ar automáticamente', 'Cuando necesitás actualizar el catálogo completo desde el sitio fuente'),
-        ('Sync desde Sheet',   'Lee precios desde una planilla Google Sheets y los aplica al catálogo', 'Para actualizar precios en masa sin entrar producto por producto'),
+        (('ID',               True,  BROWN_DARK), 'Identificador único del producto',           ('NO — nunca modificar', True, RED)),
+        (('Precio Minorista', True,  BROWN_DARK), 'Precio de venta al público (ARS)',           ('Sí', True, GREEN)),
+        (('Precio Mayorista', True,  BROWN_DARK), 'Precio de venta a revendedores (ARS)',       ('Sí', True, GREEN)),
+        (('Precio Promo',     True,  BROWN_DARK), 'Precio promocional opcional (ARS)',          ('Sí', True, GREEN)),
+        (('Stock',            True,  BROWN_DARK), 'Unidades disponibles (número entero)',       ('Sí', True, GREEN)),
+        (('Activo',           True,  BROWN_DARK), 'Sí = visible en catálogo  /  No = oculto',  ('Sí', True, GREEN)),
+        (('Nombre',           False, BROWN_MID),  'Solo referencia visual — no se sincroniza', ('No aplica', False, RGBColor(0x94,0xA3,0xB8))),
     ],
-    col_widths=[4.0, 6.0, 5.5]
+    col_widths=[3.5, 7.5, 4.0]
 )
+
+tip_box(doc, 'Lo que NO se actualiza por Sheet: nombre, descripcion, imagen y categoria. '
+             'Para cambiar esos campos hay que editar el producto manualmente desde el Catalogo.',
+        color=AMBER)
 
 h2(doc, 'Exportaciones disponibles')
 
