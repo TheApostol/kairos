@@ -150,6 +150,9 @@ export default function CatalogPage() {
   const [showPdfDialog, setShowPdfDialog] = useState(false)
   const [pdfTitle, setPdfTitle] = useState('Catálogo Kairos')
   const [selectedForPdf, setSelectedForPdf] = useState<Set<number>>(new Set())
+  const [allProductsForPdf, setAllProductsForPdf] = useState<Product[]>([])
+  const [loadingPdfProducts, setLoadingPdfProducts] = useState(false)
+  const [exportAllProducts, setExportAllProducts] = useState(true)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [pdfError, setPdfError] = useState('')
 
@@ -285,9 +288,12 @@ export default function CatalogPage() {
   const handleExportPdf = async () => {
     setDownloadingPdf(true)
     setPdfError('')
-    const ids = Array.from(selectedForPdf)
     const params = new URLSearchParams({ title: pdfTitle })
-    if (ids.length > 0) ids.forEach((id) => params.append('product_ids', String(id)))
+    if (!exportAllProducts) {
+      const ids = Array.from(selectedForPdf)
+      if (ids.length === 0) { setDownloadingPdf(false); return }
+      ids.forEach((id) => params.append('product_ids', String(id)))
+    }
     try {
       const res = await fetch(`${getApiUrl('/products/export-catalog')}?${params.toString()}`)
       if (!res.ok) throw new Error(await res.text())
@@ -328,9 +334,22 @@ export default function CatalogPage() {
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
-            onClick={() => {
-              setSelectedForPdf(new Set(products.map((p) => p.id)))
+            onClick={async () => {
               setShowPdfDialog(true)
+              setPdfError('')
+              setExportAllProducts(true)
+              setLoadingPdfProducts(true)
+              try {
+                const data = await getProducts({ per_page: '500', activo: 'true' })
+                const all: Product[] = data.items ?? data ?? []
+                setAllProductsForPdf(all)
+                setSelectedForPdf(new Set(all.map((p: Product) => p.id)))
+              } catch {
+                setAllProductsForPdf(products)
+                setSelectedForPdf(new Set(products.map((p) => p.id)))
+              } finally {
+                setLoadingPdfProducts(false)
+              }
             }}
             className="gap-2"
           >
@@ -747,47 +766,82 @@ export default function CatalogPage() {
                 placeholder="Catálogo Kairos"
               />
             </div>
+
+            {/* Export scope toggle */}
             <div className="space-y-2">
-              <Label>Seleccionar productos ({selectedForPdf.size} seleccionados)</Label>
-              <div className="max-h-48 overflow-y-auto space-y-1 border rounded-md p-2">
-                {products.map((p) => (
-                  <label key={p.id} className="flex items-center gap-2 cursor-pointer py-1">
-                    <input
-                      type="checkbox"
-                      checked={selectedForPdf.has(p.id)}
-                      onChange={() => togglePdfProduct(p.id)}
-                      className="rounded"
-                    />
-                    <span className="text-sm">{p.nombre}</span>
-                  </label>
-                ))}
-              </div>
+              <Label>Productos a incluir</Label>
               <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedForPdf(new Set(products.map((p) => p.id)))}
+                <button
+                  type="button"
+                  onClick={() => setExportAllProducts(true)}
+                  className={`flex-1 py-2 px-3 rounded-md border text-sm font-medium transition-colors ${exportAllProducts ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
                 >
-                  Todos
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedForPdf(new Set())}
+                  Todo el catálogo
+                  {!loadingPdfProducts && allProductsForPdf.length > 0 && (
+                    <span className="ml-1 opacity-70">({allProductsForPdf.length})</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExportAllProducts(false)}
+                  className={`flex-1 py-2 px-3 rounded-md border text-sm font-medium transition-colors ${!exportAllProducts ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
                 >
-                  Ninguno
-                </Button>
+                  Selección manual
+                </button>
               </div>
             </div>
+
+            {/* Manual selection list */}
+            {!exportAllProducts && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>{selectedForPdf.size} seleccionados</Label>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="sm" className="h-6 text-xs"
+                      onClick={() => setSelectedForPdf(new Set(allProductsForPdf.map((p) => p.id)))}>
+                      Todos
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-6 text-xs"
+                      onClick={() => setSelectedForPdf(new Set())}>
+                      Ninguno
+                    </Button>
+                  </div>
+                </div>
+                {loadingPdfProducts ? (
+                  <div className="flex items-center justify-center h-24 border rounded-md">
+                    <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                  </div>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto space-y-0.5 border rounded-md p-2">
+                    {allProductsForPdf.map((p) => (
+                      <label key={p.id} className="flex items-center gap-2 cursor-pointer py-1 hover:bg-slate-50 px-1 rounded">
+                        <input
+                          type="checkbox"
+                          checked={selectedForPdf.has(p.id)}
+                          onChange={() => togglePdfProduct(p.id)}
+                          className="rounded"
+                        />
+                        <span className="text-sm truncate">{p.nombre}</span>
+                        {p.categoria && <span className="text-xs text-slate-400 ml-auto shrink-0">{p.categoria}</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           {pdfError && (
             <p className="text-sm text-red-600 px-1">{pdfError}</p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowPdfDialog(false); setPdfError('') }}>Cancelar</Button>
-            <Button onClick={handleExportPdf} disabled={selectedForPdf.size === 0 || downloadingPdf} className="gap-2">
+            <Button
+              onClick={handleExportPdf}
+              disabled={((!exportAllProducts && selectedForPdf.size === 0) || downloadingPdf)}
+              className="gap-2"
+            >
               {downloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-              {downloadingPdf ? 'Generando...' : 'Descargar PDF'}
+              {downloadingPdf ? 'Generando...' : `Descargar PDF${exportAllProducts && allProductsForPdf.length > 0 ? ` (${allProductsForPdf.length})` : ''}`}
             </Button>
           </DialogFooter>
         </DialogContent>

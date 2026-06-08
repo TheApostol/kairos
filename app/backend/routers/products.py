@@ -59,7 +59,19 @@ class CatalogExportRequest(BaseModel):
 # PDF CATALOG GENERATOR
 # ─────────────────────────────────────────────
 
-def _load_pdf_image(imagen_url: str, width, height):
+def _fetch_image_bytes(url: str) -> bytes | None:
+    """Fetch image bytes from a URL with a short timeout. Returns None on any failure."""
+    try:
+        import httpx
+        resp = httpx.get(url, timeout=4, follow_redirects=True)
+        if resp.status_code == 200 and len(resp.content) > 100:
+            return resp.content
+    except Exception:
+        pass
+    return None
+
+
+def _load_pdf_image(imagen_url: str, width, height, prefetched: bytes | None = None):
     """Load a product image for ReportLab. Supports base64 data URLs and http(s) URLs."""
     import base64, io as _io
     try:
@@ -71,10 +83,9 @@ def _load_pdf_image(imagen_url: str, width, height):
             img_bytes = base64.b64decode(data_part)
             return RLImage(_io.BytesIO(img_bytes), width=width, height=height)
         elif imagen_url.startswith("http"):
-            import httpx
-            resp = httpx.get(imagen_url, timeout=5, follow_redirects=True)
-            if resp.status_code == 200:
-                return RLImage(_io.BytesIO(resp.content), width=width, height=height)
+            raw = prefetched if prefetched is not None else _fetch_image_bytes(imagen_url)
+            if raw:
+                return RLImage(_io.BytesIO(raw), width=width, height=height)
     except Exception:
         pass
     return None
@@ -185,6 +196,23 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
         textColor=MID_GRAY,
     )
 
+    # Prefetch all external images in parallel so we don't block the PDF build
+    image_cache: dict[str, bytes | None] = {}
+    http_urls = [
+        p.get("imagen_url", "")
+        for p in products
+        if (p.get("imagen_url") or "").startswith("http")
+    ]
+    if http_urls:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_fetch_image_bytes, url): url for url in http_urls}
+            for future in as_completed(futures, timeout=20):
+                url = futures[future]
+                try:
+                    image_cache[url] = future.result()
+                except Exception:
+                    image_cache[url] = None
+
     story = []
 
     # Header
@@ -236,7 +264,8 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                 cell_content = []
 
                 img_url = p.get("imagen_url", "")
-                rl_img = _load_pdf_image(img_url, 3*cm, 3*cm)
+                prefetched = image_cache.get(img_url) if img_url.startswith("http") else None
+                rl_img = _load_pdf_image(img_url, 3*cm, 3*cm, prefetched=prefetched)
                 if rl_img:
                     cell_content.append(rl_img)
                     cell_content.append(Spacer(1, 0.2 * cm))
