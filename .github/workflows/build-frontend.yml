@@ -41,6 +41,7 @@ jobs:
           git add -f app/frontend/.next
           git add -u
           git diff --staged --quiet || git commit -m "chore: auto-build frontend"
-          # Pull rebase to handle concurrent pushes, then push
+          # Discard any tracked-file changes left by npm (e.g. package-lock.json)
+          git checkout -- .
           git pull --rebase origin main
           git push
