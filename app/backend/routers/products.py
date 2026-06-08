@@ -507,17 +507,44 @@ def create_product(body: ProductCreate):
 @router.put("/{product_id}")
 @router.patch("/{product_id}")
 def update_product(product_id: str, body: ProductUpdate):
-    products = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
-    if not products:
+    existing = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
+    if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
 
     update_data = body.model_dump(exclude_none=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    prev = existing[0]
+    price_changed = (
+        ("precio_minorista" in update_data and update_data["precio_minorista"] != prev.get("precio_minorista")) or
+        ("precio_mayorista" in update_data and update_data["precio_mayorista"] != prev.get("precio_mayorista"))
+    )
+    if price_changed:
+        try:
+            db.insert("product_price_history", {
+                "product_id": product_id,
+                "precio_minorista": update_data.get("precio_minorista", prev.get("precio_minorista")),
+                "precio_mayorista": update_data.get("precio_mayorista", prev.get("precio_mayorista")),
+                "changed_at": datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            pass
+
     update_data["updated_at"] = datetime.utcnow().isoformat()
     updated = db.update("products", product_id, update_data)
     return updated
+
+
+@router.get("/{product_id}/price-history")
+def get_price_history(product_id: str, limit: int = 10):
+    history = db.raw_select("product_price_history", {
+        "select": "*",
+        "product_id": f"eq.{product_id}",
+        "order": "changed_at.desc",
+        "limit": limit,
+    })
+    return {"history": history}
 
 
 @router.delete("/{product_id}")

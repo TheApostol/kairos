@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
-import { getProducts, getProductCategories, createProduct, updateProduct, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, getProductsCsvUrl } from '@/lib/api'
+import { getProducts, getProductCategories, createProduct, updateProduct, getProductPriceHistory, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, getProductsCsvUrl } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw } from 'lucide-react'
+import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw, History, ChevronDown } from 'lucide-react'
 
 const PER_PAGE = 24
 
@@ -164,6 +164,11 @@ export default function CatalogPage() {
   const [sheetSyncing, setSheetSyncing] = useState(false)
   const [sheetSyncResult, setSheetSyncResult] = useState('')
 
+  // Price history
+  const [showPriceHistory, setShowPriceHistory] = useState(false)
+  const [priceHistory, setPriceHistory] = useState<Array<{ precio_minorista?: number; precio_mayorista?: number; changed_at: string }>>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
+
   // Load category list once
   useEffect(() => {
     getProductCategories()
@@ -221,11 +226,15 @@ export default function CatalogPage() {
   const openAddDialog = () => {
     setEditingProduct(null)
     setForm(emptyForm)
+    setShowPriceHistory(false)
+    setPriceHistory([])
     setShowDialog(true)
   }
 
   const openEditDialog = (product: Product) => {
     setEditingProduct(product)
+    setShowPriceHistory(false)
+    setPriceHistory([])
     setForm({
       nombre: product.nombre,
       descripcion: product.descripcion ?? '',
@@ -698,6 +707,62 @@ export default function CatalogPage() {
                 <Label htmlFor="destacado">Destacado</Label>
               </div>
             </div>
+
+            {editingProduct && (
+              <div className="border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                  onClick={async () => {
+                    const next = !showPriceHistory
+                    setShowPriceHistory(next)
+                    if (next && priceHistory.length === 0) {
+                      setLoadingHistory(true)
+                      try {
+                        const res = await getProductPriceHistory(editingProduct.id)
+                        setPriceHistory(res.history ?? [])
+                      } catch {}
+                      finally { setLoadingHistory(false) }
+                    }
+                  }}
+                >
+                  <span className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-slate-400" />
+                    Historial de precios
+                  </span>
+                  <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${showPriceHistory ? 'rotate-180' : ''}`} />
+                </button>
+                {showPriceHistory && (
+                  <div className="border-t bg-slate-50 px-3 py-2">
+                    {loadingHistory ? (
+                      <div className="flex justify-center py-3">
+                        <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                      </div>
+                    ) : priceHistory.length === 0 ? (
+                      <p className="text-xs text-slate-400 py-2 text-center">Sin cambios de precio registrados</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {priceHistory.map((h, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs">
+                            <span className="text-slate-500">
+                              {new Date(h.changed_at).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </span>
+                            <span className="text-slate-700">
+                              {h.precio_minorista !== undefined && h.precio_minorista !== null
+                                ? `1u: ${formatCurrency(h.precio_minorista)}`
+                                : ''}
+                              {h.precio_mayorista !== undefined && h.precio_mayorista !== null
+                                ? ` · x+: ${formatCurrency(h.precio_mayorista)}`
+                                : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancelar</Button>
