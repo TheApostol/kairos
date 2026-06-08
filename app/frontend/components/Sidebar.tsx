@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { getLeads } from '@/lib/api'
+import { useScraperStatus } from '@/contexts/ScraperStatusContext'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -32,6 +33,7 @@ interface SidebarProps {
 export default function Sidebar({ onClose }: SidebarProps) {
   const pathname = usePathname()
   const [leadCount, setLeadCount] = useState<number | null>(null)
+  const { isRunning: scraperRunning, progress: scraperProgress } = useScraperStatus()
 
   useEffect(() => {
     getLeads({ limit: 1 })
@@ -112,6 +114,20 @@ export default function Sidebar({ onClose }: SidebarProps) {
                   }
                 >
                   {leadCount > 999 ? '999+' : leadCount}
+                </span>
+              )}
+              {href === '/scraper' && scraperRunning && (
+                <span className="flex items-center gap-1">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                  </span>
+                  <span
+                    className="text-xs font-semibold"
+                    style={{ color: isActive ? '#2C1F16' : '#86efac' }}
+                  >
+                    {scraperProgress}%
+                  </span>
                 </span>
               )}
             </Link>
