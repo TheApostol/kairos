@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: app/frontend/package-lock.json
 
@@ -37,8 +37,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Add .next to git (force since it's gitignored)
+          # Stage .next artifacts and any tracked files modified by npm install
           git add -f app/frontend/.next
+          git add -u
           git diff --staged --quiet || git commit -m "chore: auto-build frontend"
           # Pull rebase to handle concurrent pushes, then push
           git pull --rebase origin main

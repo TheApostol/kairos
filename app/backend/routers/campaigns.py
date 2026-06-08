@@ -52,7 +52,7 @@ def _send_email_brevo(to_email: str, to_name: str, subject: str, html_body: str,
         return {"error": "BREVO_API_KEY not configured"}
 
     payload = {
-        "sender": {"name": "Kairos CRM", "email": "noreply@kairos.com"},
+        "sender": {"name": settings.SENDER_NAME, "email": settings.SENDER_EMAIL},
         "to": [{"email": to_email, "name": to_name}],
         "subject": subject,
         "htmlContent": html_body or f"<p>{text_body}</p>",
