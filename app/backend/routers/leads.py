@@ -31,6 +31,10 @@ class TaskUpdate(BaseModel):
     completado: Optional[bool] = None
 
 
+class NoteCreate(BaseModel):
+    text: str
+
+
 def _build_filters(
     empresa: Optional[str],
     rubro: Optional[str],
@@ -269,6 +273,27 @@ def update_task(lead_id: str, task_id: str, body: TaskUpdate):
     return updated
 
 
+@router.post("/{lead_id}/notes")
+def create_note(lead_id: str, body: NoteCreate):
+    note = db.insert("lead_notes", {
+        "lead_id": int(lead_id),
+        "texto": body.text,
+        "created_at": datetime.utcnow().isoformat(),
+    })
+    return note
+
+
+@router.get("/{lead_id}/notes")
+def get_notes(lead_id: str):
+    notes = db.select(
+        "lead_notes",
+        filters={"lead_id": f"eq.{lead_id}"},
+        order="created_at.desc",
+        limit=100,
+    )
+    return notes
+
+
 @router.get("/{lead_id}")
 def get_lead(lead_id: str):
     leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
@@ -287,6 +312,15 @@ def get_lead(lead_id: str):
         lead["activities"] = activities
     except Exception:
         lead["activities"] = []
+    try:
+        lead["notas"] = db.select(
+            "lead_notes",
+            filters={"lead_id": f"eq.{lead_id}"},
+            order="created_at.asc",
+            limit=100,
+        )
+    except Exception:
+        lead["notas"] = []
     return lead
 
 

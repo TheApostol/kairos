@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createCampaign, generateCampaignText, getLeads } from '@/lib/api'
+import { createCampaign, sendCampaign, generateCampaignText, getLeads } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -55,6 +55,7 @@ export default function NewCampaignPage() {
   // Step 2 fields
   const [asunto, setAsunto] = useState('')
   const [cuerpo, setCuerpo] = useState('')
+  const [cuerpoHtml, setCuerpoHtml] = useState('')
 
   const buildSegmentParams = () => {
     const p: Record<string, string | boolean> = {}
@@ -91,6 +92,7 @@ export default function NewCampaignPage() {
       })
       if (result.asunto) setAsunto(result.asunto)
       if (result.cuerpo) setCuerpo(result.cuerpo)
+      if (result.cuerpo_html) setCuerpoHtml(result.cuerpo_html)
     } catch {
     } finally {
       setGeneratingAI(false)
@@ -100,14 +102,15 @@ export default function NewCampaignPage() {
   const handleSend = async () => {
     setSending(true)
     try {
-      await createCampaign({
+      const campaign = await createCampaign({
         nombre,
         tipo,
         asunto,
         cuerpo,
+        cuerpo_html: cuerpoHtml || undefined,
         segmento: buildSegmentParams(),
-        estado: 'enviado',
       })
+      await sendCampaign(campaign.id)
       setSent(true)
     } catch {
     } finally {
@@ -136,6 +139,7 @@ export default function NewCampaignPage() {
             setNombre('')
             setAsunto('')
             setCuerpo('')
+            setCuerpoHtml('')
           }}>
             Nueva Campaña
           </Button>

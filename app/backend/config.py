@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     SENDER_NAME: str = "Kairos CRM"
     FRONTEND_URL: str = "http://localhost:3000"
     GOOGLE_API_KEY: str = ""
+    BACKEND_URL: str = "https://kairos-anuu.onrender.com"
 
     class Config:
         env_file = ".env"

@@ -110,9 +110,14 @@ def _execute_campaign(campaign_id: str):
 
     enviados = 0
     errors = 0
+    seen_emails: set = set()
 
     for lead in leads:
         email_dest = lead.get("email", "")
+        if campaign.get("tipo") == "email" and email_dest:
+            if email_dest.lower() in seen_emails:
+                continue
+            seen_emails.add(email_dest.lower())
         send_record = {
             "campaign_id": campaign_id,
             "lead_id": lead.get("id"),
@@ -226,8 +231,7 @@ def send_catalogue_to_clients(background_tasks: BackgroundTasks):
     params = {"select": "*", "email": "neq.", "estado": "in.(cliente,interesado)", "limit": 1000}
     leads = db.raw_select("leads", params)
 
-    from config import settings as _settings
-    catalogue_url = "https://kairos-anuu.onrender.com/products/export-catalog"
+    catalogue_url = f"{settings.BACKEND_URL}/products/export-catalog"
     asunto = "Catálogo de productos actualizado — Kairos"
     cuerpo = (
         "Hola {empresa},\n\n"
