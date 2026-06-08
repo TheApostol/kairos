@@ -2,15 +2,25 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    SUPABASE_URL: str = "https://gachxhquivfvwejytsbb.supabase.co"
-    SUPABASE_KEY: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhY2h4aHF1aXZmdndlanl0c2JiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU3MTczMTksImV4cCI6MjA5MTI5MzMxOX0.AjHenUD4i_xErSORT8WzIpDt3Vvrn5pU2tMTevxzZ3Y"
+    # Supabase
+    SUPABASE_URL: str = ""
+    SUPABASE_KEY: str = ""
+
+    # Third-party services
     ANTHROPIC_API_KEY: str = ""
     BREVO_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
+
+    # App URLs
     SENDER_EMAIL: str = "noreply@kairos.com"
     SENDER_NAME: str = "Kairos CRM"
     FRONTEND_URL: str = "http://localhost:3000"
-    GOOGLE_API_KEY: str = ""
-    BACKEND_URL: str = "https://kairos-anuu.onrender.com"
+    BACKEND_URL: str = "http://localhost:8000"
+
+    # Security
+    # Comma-separated origins. Example: https://kairos.vercel.app,https://kairosdis.com.ar
+    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    REQUIRE_AUTH: bool = True
 
     class Config:
         env_file = ".env"
