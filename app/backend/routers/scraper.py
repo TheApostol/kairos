@@ -898,6 +898,40 @@ def cancel_job(job_id: str):
     return {"ok": True}
 
 
+@router.delete("/jobs/{job_id}")
+def delete_job(job_id: str):
+    """Delete a completed or failed job from history."""
+    jobs = db.select("scraper_jobs", filters={"id": f"eq.{job_id}"}, limit=1)
+    if not jobs:
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+    if jobs[0].get("status") in ("running", "pending"):
+        raise HTTPException(status_code=400, detail="Cancelá el job antes de eliminarlo.")
+    db.delete("scraper_jobs", job_id)
+    return {"ok": True}
+
+
+@router.post("/reset")
+def reset_all_jobs():
+    """Force-cancel every running or pending job so a new one can be started."""
+    active = db.raw_select(
+        "scraper_jobs",
+        {"select": "id", "status": "in.(pending,running)", "limit": 50},
+    )
+    cancelled = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for job in active:
+        try:
+            db.update("scraper_jobs", job["id"], {
+                "status": "failed",
+                "error_msg": "Reiniciado manualmente",
+                "completed_at": now,
+            })
+            cancelled += 1
+        except Exception:
+            pass
+    return {"ok": True, "cancelled": cancelled}
+
+
 @router.get("/progress")
 async def stream_latest_progress():
     """SSE stream for the most recent job — used by the frontend."""

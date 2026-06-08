@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
-import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, getApiUrl } from '@/lib/api'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, deleteScraperJob, resetScraper, getApiUrl } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -14,7 +14,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Trash2, RotateCcw } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -36,7 +47,7 @@ type RunState = 'idle' | 'running' | 'done' | 'error'
 function formatDate(dateStr?: string) {
   if (!dateStr) return '—'
   try {
-    return format(new Date(dateStr), "d MMM yyyy, HH:mm", { locale: es })
+    return format(new Date(dateStr), "d MMM HH:mm", { locale: es })
   } catch {
     return dateStr
   }
@@ -52,7 +63,7 @@ function JobStatusBadge({ estado }: { estado: string }) {
   const cfg = map[estado] ?? { variant: 'secondary' as const, icon: Clock }
   const Icon = cfg.icon
   return (
-    <Badge variant={cfg.variant} className="gap-1 capitalize">
+    <Badge variant={cfg.variant} className="gap-1 capitalize text-xs">
       <Icon className={`w-3 h-3 ${estado === 'corriendo' ? 'animate-spin' : ''}`} />
       {estado}
     </Badge>
@@ -66,72 +77,136 @@ export default function ScraperPage() {
   const [enrichState, setEnrichState] = useState<RunState>('idle')
   const [scraperError, setScraperError] = useState('')
   const [enrichError, setEnrichError] = useState('')
+  const [historyError, setHistoryError] = useState('')
 
-  // Scraper progress
   const [progress, setProgress] = useState(0)
   const [currentQuery, setCurrentQuery] = useState('')
   const [logLines, setLogLines] = useState<string[]>([])
   const logRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
-  // Enricher progress
   const [enrichProgress, setEnrichProgress] = useState(0)
   const [enrichFound, setEnrichFound] = useState(0)
   const [enrichTotal, setEnrichTotal] = useState(0)
   const [enrichStartedAt, setEnrichStartedAt] = useState<Date | null>(null)
   const enrichIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const historyPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [scraperJobId, setScraperJobId] = useState<string | null>(null)
   const [enrichJobId, setEnrichJobId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cancellingId, setCancellingId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [resetting, setResetting] = useState(false)
 
-  const cancelJob = async (jobId: number) => {
-    setCancellingId(jobId)
-    try {
-      await cancelScraperJob(jobId)
-      await fetchHistory()
-      setScraperState((prev) => prev === 'running' ? 'idle' : prev)
-      setEnrichState((prev) => prev === 'running' ? 'idle' : prev)
-    } catch {}
-    finally { setCancellingId(null) }
-  }
+  const hasActiveJobs = history.some(j => j.estado === 'corriendo' || j.estado === 'pendiente')
 
-  const fetchHistory = async () => {
-    setRefreshing(true)
+  const fetchHistory = useCallback(async (silent = false) => {
+    if (!silent) setRefreshing(true)
+    setHistoryError('')
     try {
       const data = await getScraperHistory()
       const jobs: ScraperJob[] = data.items ?? data ?? []
       setHistory(jobs)
-
-      // Sync UI state with actual job status from DB
-      const runningJob = jobs.find((j) => j.estado === 'corriendo' || j.estado === 'pendiente')
+      const runningJob = jobs.find(j => j.estado === 'corriendo' || j.estado === 'pendiente')
       if (!runningJob) {
-        // No running jobs → reset any stuck running states
-        setScraperState((prev) => prev === 'running' ? 'idle' : prev)
-        setEnrichState((prev) => prev === 'running' ? 'idle' : prev)
+        setScraperState(prev => prev === 'running' ? 'idle' : prev)
+        setEnrichState(prev => prev === 'running' ? 'idle' : prev)
       }
-    } catch {}
-    finally { setRefreshing(false) }
-  }
+      return jobs
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setHistoryError(`No se pudo cargar el historial: ${msg}`)
+      return []
+    } finally {
+      if (!silent) setRefreshing(false)
+    }
+  }, [])
+
+  // Auto-poll history every 5s while jobs are running
+  useEffect(() => {
+    if (hasActiveJobs || scraperState === 'running' || enrichState === 'running') {
+      if (!historyPollRef.current) {
+        historyPollRef.current = setInterval(() => fetchHistory(true), 5000)
+      }
+    } else {
+      if (historyPollRef.current) {
+        clearInterval(historyPollRef.current)
+        historyPollRef.current = null
+      }
+    }
+    return () => {
+      if (historyPollRef.current) {
+        clearInterval(historyPollRef.current)
+        historyPollRef.current = null
+      }
+    }
+  }, [hasActiveJobs, scraperState, enrichState, fetchHistory])
 
   useEffect(() => {
     fetchHistory().finally(() => setLoadingHistory(false))
     return () => {
       eventSourceRef.current?.close()
       if (enrichIntervalRef.current) clearInterval(enrichIntervalRef.current)
+      if (historyPollRef.current) clearInterval(historyPollRef.current)
     }
-  }, [])
+  }, [fetchHistory])
 
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight
-    }
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logLines])
 
   const isScraperRunning = scraperState === 'running'
   const isEnrichRunning = enrichState === 'running'
-  const anyJobRunning = isScraperRunning || isEnrichRunning
+  const anyJobRunning = isScraperRunning || isEnrichRunning || hasActiveJobs
+
+  const cancelJob = async (jobId: number) => {
+    setCancellingId(jobId)
+    try {
+      await cancelScraperJob(jobId)
+      await fetchHistory()
+      setScraperState(prev => prev === 'running' ? 'idle' : prev)
+      setEnrichState(prev => prev === 'running' ? 'idle' : prev)
+    } catch (e: unknown) {
+      alert(`No se pudo cancelar: ${e instanceof Error ? e.message : e}`)
+    } finally {
+      setCancellingId(null)
+    }
+  }
+
+  const deleteJob = async (jobId: number) => {
+    setDeletingId(jobId)
+    try {
+      await deleteScraperJob(jobId)
+      setHistory(prev => prev.filter(j => j.id !== jobId))
+    } catch (e: unknown) {
+      alert(`No se pudo eliminar: ${e instanceof Error ? e.message : e}`)
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const handleReset = async () => {
+    setResetting(true)
+    try {
+      await resetScraper()
+      eventSourceRef.current?.close()
+      if (enrichIntervalRef.current) { clearInterval(enrichIntervalRef.current); enrichIntervalRef.current = null }
+      setScraperState('idle')
+      setEnrichState('idle')
+      setScraperJobId(null)
+      setEnrichJobId(null)
+      setScraperError('')
+      setEnrichError('')
+      setLogLines([])
+      setProgress(0)
+      await fetchHistory()
+    } catch (e: unknown) {
+      alert(`Error al reiniciar: ${e instanceof Error ? e.message : e}`)
+    } finally {
+      setResetting(false)
+    }
+  }
 
   const stopCurrentJob = async (jobId: string | null, onDone: () => void) => {
     if (!jobId) return
@@ -139,7 +214,9 @@ export default function ScraperPage() {
       await cancelScraperJob(jobId)
       onDone()
       await fetchHistory()
-    } catch {}
+    } catch (e: unknown) {
+      alert(`No se pudo detener: ${e instanceof Error ? e.message : e}`)
+    }
   }
 
   const startScraper = async () => {
@@ -154,47 +231,48 @@ export default function ScraperPage() {
       const res = await runScraper()
       if (res?.job_id) setScraperJobId(String(res.job_id))
 
-      const es = new EventSource(getApiUrl('/scraper/progress'))
-      eventSourceRef.current = es
+      const evSrc = new EventSource(getApiUrl('/scraper/progress'))
+      eventSourceRef.current = evSrc
 
-      es.onmessage = (event) => {
+      evSrc.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
           if (data.progress !== undefined) setProgress(Math.min(100, data.progress))
           if (data.query) {
             setCurrentQuery(data.query)
-            setLogLines((prev) => [...prev.slice(-49), `[${new Date().toLocaleTimeString('es-AR')}] ${data.query}`])
+            setLogLines(prev => [...prev.slice(-49), `[${new Date().toLocaleTimeString('es-AR')}] ${data.query}`])
           }
           if (data.done || data.progress >= 100) {
-            es.close()
+            evSrc.close()
             setScraperState('done')
             setProgress(100)
             setCurrentQuery('Completado')
-            setLogLines((prev) => [...prev, `✓ Encontrados: ${data.total_found ?? 0} · Nuevos: ${data.new_found ?? 0}`])
+            setLogLines(prev => [...prev, `✓ Encontrados: ${data.total_found ?? 0} · Nuevos: ${data.new_found ?? 0}`])
             fetchHistory()
           }
           if (data.error) {
-            es.close()
+            evSrc.close()
             setScraperState('error')
-            setLogLines((prev) => [...prev, `ERROR: ${data.error}`])
+            setScraperError(data.error)
+            setLogLines(prev => [...prev, `ERROR: ${data.error}`])
           }
         } catch {}
       }
 
-      es.onerror = () => {
-        es.close()
-        setScraperState((prev) => prev === 'running' ? 'done' : prev)
+      evSrc.onerror = () => {
+        evSrc.close()
+        setScraperState(prev => prev === 'running' ? 'done' : prev)
         fetchHistory()
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes('409') || msg.includes('corriendo')) {
-        setScraperError('Ya hay un job corriendo. Refrescá el historial para ver el estado.')
-      } else {
-        setScraperError('Error al iniciar el scraper.')
-      }
       setScraperState('error')
-      setLogLines((prev) => [...prev, `Error al iniciar el scraper`])
+      if (msg.includes('409') || msg.includes('corriendo') || msg.includes('job')) {
+        setScraperError('Hay un job activo bloqueando el inicio. Usá "Forzar reinicio" para cancelarlo.')
+      } else {
+        setScraperError(msg.length < 200 ? msg : 'Error al iniciar el scraper.')
+      }
+      setLogLines(prev => [...prev, `Error: ${msg.slice(0, 120)}`])
     }
   }
 
@@ -211,57 +289,83 @@ export default function ScraperPage() {
       const jobId = res?.job_id
       if (jobId) setEnrichJobId(String(jobId))
 
-      // Poll job status every 4s for live progress
       if (enrichIntervalRef.current) clearInterval(enrichIntervalRef.current)
       enrichIntervalRef.current = setInterval(async () => {
         const data = await getScraperHistory()
         const jobs: ScraperJob[] = data.items ?? data ?? []
-
-        // Find the enrichment job we just started (most recent enrichment)
         const enrichJob = jobId
-          ? jobs.find((j) => String(j.id) === String(jobId))
-          : jobs.find((j) => j.tipo === 'enrichment')
+          ? jobs.find(j => String(j.id) === String(jobId))
+          : jobs.find(j => j.tipo === 'enrichment')
 
         if (enrichJob) {
           setEnrichProgress(enrichJob.progress ?? 0)
           setEnrichFound(enrichJob.nuevos_agregados ?? 0)
           setEnrichTotal(enrichJob.total_encontrados ?? 0)
-
+          setHistory(jobs)
           if (enrichJob.estado === 'completado' || enrichJob.estado === 'error') {
             clearInterval(enrichIntervalRef.current!)
             enrichIntervalRef.current = null
             setEnrichState(enrichJob.estado === 'completado' ? 'done' : 'error')
             if (enrichJob.estado === 'error') setEnrichError(enrichJob.error ?? 'Error desconocido')
-            setHistory(jobs)
           }
         }
       }, 4000)
 
-      // Safety timeout after 15 minutes
       setTimeout(() => {
         if (enrichIntervalRef.current) {
           clearInterval(enrichIntervalRef.current)
           enrichIntervalRef.current = null
-          setEnrichState((prev) => prev === 'running' ? 'done' : prev)
+          setEnrichState(prev => prev === 'running' ? 'done' : prev)
           fetchHistory()
         }
       }, 900000)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes('409') || msg.includes('corriendo')) {
-        setEnrichError('Ya hay un job corriendo. Esperá a que termine.')
-      } else {
-        setEnrichError('Error al iniciar el enriquecimiento.')
-      }
       setEnrichState('error')
+      if (msg.includes('409') || msg.includes('corriendo') || msg.includes('job')) {
+        setEnrichError('Hay un job activo bloqueando el inicio. Usá "Forzar reinicio" para cancelarlo.')
+      } else {
+        setEnrichError(msg.length < 200 ? msg : 'Error al iniciar el enriquecimiento.')
+      }
     }
   }
 
+  const errorJobs = history.filter(j => j.estado === 'error')
+  const activeJobsInHistory = history.filter(j => j.estado === 'corriendo' || j.estado === 'pendiente')
+
   return (
     <div className="space-y-6 max-w-4xl">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Scraper de Leads</h1>
-        <p className="text-slate-500 mt-1">Extrae y enriquece leads automáticamente</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Scraper de Leads</h1>
+          <p className="text-slate-500 mt-1">Extrae y enriquece leads automáticamente</p>
+        </div>
+
+        {/* Force reset button — shown when there are stuck jobs or errors blocking new starts */}
+        {(activeJobsInHistory.length > 0 || scraperState === 'error' || enrichState === 'error') && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2 border-orange-300 text-orange-700 hover:bg-orange-50" disabled={resetting}>
+                {resetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                Forzar reinicio
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>¿Cancelar todos los jobs activos?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Esto cancela forzosamente {activeJobsInHistory.length} job(s) corriendo o pendientes y resetea el estado del scraper. Los datos ya extraídos se conservan.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Volver</AlertDialogCancel>
+                <AlertDialogAction onClick={handleReset} className="bg-orange-600 hover:bg-orange-700">
+                  Sí, cancelar y reiniciar
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
 
       {/* Action Cards */}
@@ -283,12 +387,12 @@ export default function ScraperPage() {
               </div>
               <div>
                 <h3 className="font-semibold text-slate-900">Ejecutar Scraper</h3>
-                <p className="text-sm text-slate-500 mt-1">Busca nuevos leads en directorios y webs</p>
+                <p className="text-sm text-slate-500 mt-1">Busca nuevos comercios en Google Places</p>
               </div>
               {scraperError && (
-                <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg text-left">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  {scraperError}
+                <div className="flex items-start gap-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg text-left">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{scraperError}</span>
                 </div>
               )}
               <Button
@@ -297,17 +401,22 @@ export default function ScraperPage() {
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
                 size="lg"
               >
-                {isScraperRunning ? <><Loader2 className="w-5 h-5 animate-spin" />Corriendo...</> : <><Play className="w-5 h-5" />Ejecutar Scraper</>}
+                {isScraperRunning
+                  ? <><Loader2 className="w-5 h-5 animate-spin" />Corriendo...</>
+                  : <><Play className="w-5 h-5" />Ejecutar Scraper</>}
               </Button>
               {isScraperRunning && scraperJobId && (
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="outline" size="sm"
                   className="w-full border-red-300 text-red-600 hover:bg-red-50 gap-2"
-                  onClick={() => stopCurrentJob(scraperJobId, () => { setScraperState('idle'); setScraperJobId(null); eventSourceRef.current?.close() })}
+                  onClick={() => stopCurrentJob(scraperJobId, () => {
+                    setScraperState('idle')
+                    setScraperJobId(null)
+                    eventSourceRef.current?.close()
+                  })}
                 >
                   <StopCircle className="w-4 h-4" />
-                  Detener scraper
+                  Pausar scraper
                 </Button>
               )}
             </div>
@@ -334,9 +443,9 @@ export default function ScraperPage() {
                 <p className="text-sm text-slate-500 mt-1">Extrae emails y teléfonos de websites</p>
               </div>
               {enrichError && (
-                <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg text-left">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  {enrichError}
+                <div className="flex items-start gap-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg text-left">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{enrichError}</span>
                 </div>
               )}
               <Button
@@ -346,17 +455,22 @@ export default function ScraperPage() {
                 className="w-full border-blue-300 text-blue-700 hover:bg-blue-50 gap-2"
                 size="lg"
               >
-                {isEnrichRunning ? <><Loader2 className="w-5 h-5 animate-spin" />Enriqueciendo...</> : <><RefreshCw className="w-5 h-5" />Enriquecer Leads</>}
+                {isEnrichRunning
+                  ? <><Loader2 className="w-5 h-5 animate-spin" />Enriqueciendo...</>
+                  : <><RefreshCw className="w-5 h-5" />Enriquecer Leads</>}
               </Button>
               {isEnrichRunning && enrichJobId && (
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="outline" size="sm"
                   className="w-full border-red-300 text-red-600 hover:bg-red-50 gap-2"
-                  onClick={() => stopCurrentJob(enrichJobId, () => { setEnrichState('idle'); setEnrichJobId(null); if (enrichIntervalRef.current) { clearInterval(enrichIntervalRef.current); enrichIntervalRef.current = null } })}
+                  onClick={() => stopCurrentJob(enrichJobId, () => {
+                    setEnrichState('idle')
+                    setEnrichJobId(null)
+                    if (enrichIntervalRef.current) { clearInterval(enrichIntervalRef.current); enrichIntervalRef.current = null }
+                  })}
                 >
                   <StopCircle className="w-4 h-4" />
-                  Detener enriquecimiento
+                  Pausar enriquecimiento
                 </Button>
               )}
             </div>
@@ -383,7 +497,7 @@ export default function ScraperPage() {
                 <div className="space-y-1">
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-600">Progreso</span>
-                    <span className="font-semibold text-slate-900">{progress}%</span>
+                    <span className="font-semibold">{progress}%</span>
                   </div>
                   <Progress value={progress} className="h-3" />
                 </div>
@@ -397,7 +511,7 @@ export default function ScraperPage() {
             )}
             <div ref={logRef} className="bg-slate-900 rounded-lg p-4 h-40 overflow-y-auto font-mono text-xs">
               {logLines.map((line, i) => (
-                <div key={i} className={line.startsWith('ERROR') ? 'text-red-400' : line.startsWith('✓') ? 'text-emerald-400' : 'text-slate-300'}>
+                <div key={i} className={line.startsWith('ERROR') || line.startsWith('Error') ? 'text-red-400' : line.startsWith('✓') ? 'text-emerald-400' : 'text-slate-300'}>
                   {line}
                 </div>
               ))}
@@ -420,16 +534,13 @@ export default function ScraperPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Progress bar */}
             <div className="space-y-1">
               <div className="flex justify-between text-sm">
                 <span className="text-slate-600">Progreso</span>
-                <span className="font-semibold text-slate-900">{enrichProgress}%</span>
+                <span className="font-semibold">{enrichProgress}%</span>
               </div>
               <Progress value={enrichProgress} className="h-3" />
             </div>
-
-            {/* Stats row */}
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-slate-50 rounded-lg px-3 py-2 text-center">
                 <p className="text-xs text-slate-500">Procesados</p>
@@ -445,25 +556,20 @@ export default function ScraperPage() {
               <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
                 <p className="text-xs text-slate-500">Tiempo</p>
                 <p className="text-sm font-semibold text-blue-700">
-                  {enrichStartedAt
-                    ? formatDistanceToNow(enrichStartedAt, { locale: es })
-                    : '—'}
+                  {enrichStartedAt ? formatDistanceToNow(enrichStartedAt, { locale: es }) : '—'}
                 </p>
               </div>
             </div>
-
             {isEnrichRunning && (
               <p className="text-xs text-slate-400 text-center">
                 Actualizando cada 4 segundos · El proceso puede tomar varios minutos
               </p>
             )}
-
             {enrichState === 'done' && (
               <p className="text-sm text-emerald-700 font-medium text-center">
                 ✓ {enrichFound} lead{enrichFound !== 1 ? 's' : ''} enriquecido{enrichFound !== 1 ? 's' : ''} de {enrichTotal} procesados
               </p>
             )}
-
             {enrichState === 'error' && enrichError && (
               <p className="text-sm text-red-600 text-center">{enrichError}</p>
             )}
@@ -474,12 +580,66 @@ export default function ScraperPage() {
       {/* History Table */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Historial de Jobs</CardTitle>
-            <Button variant="ghost" size="sm" onClick={fetchHistory} disabled={refreshing}>
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            </Button>
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base">
+              Historial de Jobs
+              {hasActiveJobs && (
+                <Badge variant="warning" className="ml-2 gap-1 text-xs">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  {activeJobsInHistory.length} activo{activeJobsInHistory.length !== 1 ? 's' : ''}
+                </Badge>
+              )}
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              {errorJobs.length > 0 && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="sm" className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 text-xs h-8">
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Limpiar {errorJobs.length} error{errorJobs.length !== 1 ? 'es' : ''}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Eliminar todos los jobs con error?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Se eliminarán {errorJobs.length} job(s) con error del historial. Esta acción no se puede deshacer.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-red-600 hover:bg-red-700"
+                        onClick={async () => {
+                          for (const job of errorJobs) {
+                            try { await deleteScraperJob(job.id) } catch {}
+                          }
+                          setHistory(prev => prev.filter(j => j.estado !== 'error'))
+                        }}
+                      >
+                        Eliminar todos
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+              <Button
+                variant="outline" size="sm"
+                onClick={() => fetchHistory()}
+                disabled={refreshing}
+                className="gap-1.5 h-8 text-xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing ? 'Actualizando...' : 'Actualizar'}
+              </Button>
+            </div>
           </div>
+          {historyError && (
+            <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              {historyError}
+            </p>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           {loadingHistory ? (
@@ -501,14 +661,14 @@ export default function ScraperPage() {
                     <TableHead>Fin</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead>Progreso</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead>Nuevos</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Nuevos</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {history.map((job) => (
-                    <TableRow key={job.id}>
+                    <TableRow key={job.id} className={job.estado === 'error' ? 'bg-red-50/40' : job.estado === 'corriendo' ? 'bg-emerald-50/30' : ''}>
                       <TableCell>
                         <Badge variant={job.tipo === 'enrichment' ? 'secondary' : 'warning'} className="text-xs capitalize">
                           {job.tipo === 'enrichment' ? 'Enriquec.' : 'Scraper'}
@@ -516,7 +676,16 @@ export default function ScraperPage() {
                       </TableCell>
                       <TableCell className="text-slate-600 text-sm">{formatDate(job.started_at)}</TableCell>
                       <TableCell className="text-slate-600 text-sm">{formatDate(job.finished_at)}</TableCell>
-                      <TableCell><JobStatusBadge estado={job.estado} /></TableCell>
+                      <TableCell>
+                        <div className="space-y-0.5">
+                          <JobStatusBadge estado={job.estado} />
+                          {job.error && (
+                            <p className="text-xs text-red-500 max-w-[180px] truncate" title={job.error}>
+                              {job.error}
+                            </p>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         {job.estado === 'corriendo' || job.estado === 'pendiente' ? (
                           <div className="flex items-center gap-2">
@@ -527,27 +696,41 @@ export default function ScraperPage() {
                           <span className="text-xs text-slate-400">{job.progress ?? 0}%</span>
                         )}
                       </TableCell>
-                      <TableCell className="font-medium">{job.total_encontrados?.toLocaleString('es-AR') ?? '—'}</TableCell>
-                      <TableCell>
-                        {job.nuevos_agregados !== undefined ? (
-                          <span className="text-emerald-700 font-semibold">+{job.nuevos_agregados.toLocaleString('es-AR')}</span>
-                        ) : '—'}
+                      <TableCell className="text-right font-medium">{job.total_encontrados?.toLocaleString('es-AR') ?? '—'}</TableCell>
+                      <TableCell className="text-right">
+                        {job.nuevos_agregados !== undefined
+                          ? <span className="text-emerald-700 font-semibold">+{job.nuevos_agregados.toLocaleString('es-AR')}</span>
+                          : '—'}
                       </TableCell>
                       <TableCell>
-                        {(job.estado === 'corriendo' || job.estado === 'pendiente') && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => cancelJob(job.id)}
-                            disabled={cancellingId === job.id}
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
-                            title="Cancelar job"
-                          >
-                            {cancellingId === job.id
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <StopCircle className="w-3.5 h-3.5" />}
-                          </Button>
-                        )}
+                        <div className="flex items-center gap-1 justify-end">
+                          {(job.estado === 'corriendo' || job.estado === 'pendiente') && (
+                            <Button
+                              variant="ghost" size="sm"
+                              onClick={() => cancelJob(job.id)}
+                              disabled={cancellingId === job.id}
+                              className="text-orange-500 hover:text-orange-700 hover:bg-orange-50 h-7 w-7 p-0"
+                              title="Cancelar / pausar job"
+                            >
+                              {cancellingId === job.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <StopCircle className="w-3.5 h-3.5" />}
+                            </Button>
+                          )}
+                          {(job.estado === 'error' || job.estado === 'completado') && (
+                            <Button
+                              variant="ghost" size="sm"
+                              onClick={() => deleteJob(job.id)}
+                              disabled={deletingId === job.id}
+                              className="text-slate-400 hover:text-red-600 hover:bg-red-50 h-7 w-7 p-0"
+                              title="Eliminar del historial"
+                            >
+                              {deletingId === job.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Trash2 className="w-3.5 h-3.5" />}
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

@@ -262,4 +262,12 @@ export async function cancelScraperJob(jobId: string | number) {
   return apiFetch(`/scraper/jobs/${jobId}/cancel`, { method: 'POST' })
 }
 
+export async function deleteScraperJob(jobId: string | number) {
+  return apiFetch(`/scraper/jobs/${jobId}`, { method: 'DELETE' })
+}
+
+export async function resetScraper() {
+  return apiFetch('/scraper/reset', { method: 'POST' })
+}
+
 export const API_BASE = API
