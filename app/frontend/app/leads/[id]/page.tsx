@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { getLead, updateLead, createLeadNote, getOrders, getLeadTasks, createLeadTask, updateLeadTask } from '@/lib/api'
+import { getLead, updateLead, createLeadNote, getOrders, getLeadTasks, createLeadTask, updateLeadTask, getPriceListUrl } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -34,6 +34,7 @@ import {
   Square,
   Plus,
   ClipboardList,
+  FileDown,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -241,6 +242,22 @@ export default function LeadDetailPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const url = getPriceListUrl(lead.id)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = ''
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+            }}
+          >
+            <FileDown className="w-4 h-4 mr-2" />
+            Lista de Precios
+          </Button>
           <Button onClick={() => router.push(`/orders?lead_id=${lead.id}`)} variant="outline" size="sm">
             <ShoppingCart className="w-4 h-4 mr-2" />
             Ver Pedidos

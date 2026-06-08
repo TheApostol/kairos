@@ -234,12 +234,96 @@ def get_orders_stats():
         for k, v in sorted(monthly_revenue.items())[-6:]
     ]
 
+    # Top clients: group by lead_id, sum total
+    lead_totals: dict = {}
+    for order in orders:
+        lid = order.get("lead_id")
+        if lid:
+            t = 0.0
+            try:
+                t = float(order.get("total") or 0)
+            except (ValueError, TypeError):
+                pass
+            lead_totals[lid] = lead_totals.get(lid, 0.0) + t
+
+    top_lead_ids = sorted(lead_totals, key=lambda k: lead_totals[k], reverse=True)[:5]
+    top_clientes = []
+    for lid in top_lead_ids:
+        rows = db.select("leads", filters={"id": f"eq.{lid}"}, select_cols="id,empresa", limit=1)
+        empresa = rows[0].get("empresa", f"Lead #{lid}") if rows else f"Lead #{lid}"
+        top_clientes.append({"lead_id": lid, "empresa": empresa, "total": round(lead_totals[lid], 2)})
+
+    # Top products by revenue from order_items
+    try:
+        all_items = db.select_all("order_items", select_cols="nombre,subtotal")
+        product_totals: dict = {}
+        for item in all_items:
+            nombre = item.get("nombre") or "Sin nombre"
+            sub = 0.0
+            try:
+                sub = float(item.get("subtotal") or 0)
+            except (ValueError, TypeError):
+                pass
+            product_totals[nombre] = product_totals.get(nombre, 0.0) + sub
+        top_productos = sorted(
+            [{"nombre": k, "total": round(v, 2)} for k, v in product_totals.items()],
+            key=lambda x: x["total"],
+            reverse=True,
+        )[:5]
+    except Exception:
+        top_productos = []
+
     return {
         "ordenes_activas": ordenes_activas,
         "revenue_mes": round(revenue_mes, 2),
         "por_mes": por_mes,
         "revenue_por_mes": revenue_por_mes,
+        "top_clientes": top_clientes,
+        "top_productos": top_productos,
     }
+
+
+@router.get("/dormant-clients")
+def get_dormant_clients(dias: int = 30):
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=dias)).isoformat()
+
+    clientes = db.select(
+        "leads",
+        filters={"estado": "eq.cliente"},
+        select_cols="id,empresa,telefono,email,ciudad,provincia",
+        limit=5000,
+    )
+
+    result = []
+    for lead in clientes:
+        lid = lead.get("id")
+        orders_recent = db.raw_select("orders", {
+            "select": "id,created_at,total",
+            "lead_id": f"eq.{lid}",
+            "order": "created_at.desc",
+            "limit": "1",
+        })
+        if not orders_recent:
+            result.append({**lead, "ultimo_pedido": None, "ultimo_total": None, "dias_inactivo": None})
+        else:
+            last_order = orders_recent[0]
+            last_date = last_order.get("created_at", "") or ""
+            if last_date < cutoff:
+                try:
+                    last_dt = datetime.fromisoformat(last_date.replace("Z", ""))
+                    dias_inactivo = (datetime.utcnow() - last_dt).days
+                except Exception:
+                    dias_inactivo = None
+                result.append({
+                    **lead,
+                    "ultimo_pedido": last_date[:10] if last_date else None,
+                    "ultimo_total": last_order.get("total"),
+                    "dias_inactivo": dias_inactivo,
+                })
+
+    result.sort(key=lambda x: x.get("dias_inactivo") or 9999, reverse=True)
+    return {"items": result, "total": len(result)}
 
 
 @router.get("")

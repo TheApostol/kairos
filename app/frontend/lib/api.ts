@@ -246,4 +246,16 @@ export async function cancelScraperJob(jobId: string | number) {
   return apiFetch(`/scraper/jobs/${jobId}/cancel`, { method: 'POST' })
 }
 
+export async function getDormantClients(dias: number = 30) {
+  return apiFetch(`/orders/dormant-clients?dias=${dias}`)
+}
+
+export async function getLowStock(threshold: number = 5) {
+  return apiFetch(`/products/low-stock?threshold=${threshold}`)
+}
+
+export function getPriceListUrl(leadId: string | number) {
+  return getApiUrl(`/products/price-list/${leadId}`)
+}
+
 export const API_BASE = API

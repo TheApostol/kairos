@@ -97,6 +97,7 @@ export default function LeadsPage() {
   const [generating, setGenerating] = useState(false)
   const [sendResult, setSendResult] = useState('')
   const [aiError, setAiError] = useState('')
+  const [exportingWa, setExportingWa] = useState(false)
 
   // CSV Import
   const [showImportDialog, setShowImportDialog] = useState(false)
@@ -245,6 +246,40 @@ export default function LeadsPage() {
     window.open(`${getApiUrl('/leads/export')}?${params.toString()}`, '_blank')
   }
 
+  const handleWaBroadcastExport = async () => {
+    setExportingWa(true)
+    try {
+      const params: Record<string, string | number | boolean> = { limit: 5000, con_telefono: true }
+      if (search) params.empresa = search
+      if (provincia && provincia !== 'all') params.provincia = provincia
+      if (rubro && rubro !== 'all') params.rubro = rubro
+      if (estado && estado !== 'all') params.estado = estado
+      const data = await getLeads(params)
+      const rows: Lead[] = data.items ?? data ?? []
+      const lines = ['Empresa,Teléfono,Link WA']
+      for (const lead of rows) {
+        if (!lead.telefono) continue
+        const tel = lead.telefono.replace(/\D/g, '')
+        const waUrl = `https://wa.me/${tel}`
+        const empresa = (lead.empresa ?? '').replace(/,/g, ' ')
+        lines.push(`${empresa},${lead.telefono},${waUrl}`)
+      }
+      const csv = lines.join('\n')
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `wa_broadcast_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+    } finally {
+      setExportingWa(false)
+    }
+  }
+
   const handleImport = async () => {
     if (!importFile) return
     setImporting(true)
@@ -272,7 +307,11 @@ export default function LeadsPage() {
           <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Leads</h1>
           <p className="mt-1" style={{ color: '#6B4F3A' }}>{total.toLocaleString('es-AR')} leads en total</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button onClick={handleWaBroadcastExport} variant="outline" className="gap-2" disabled={exportingWa}>
+            {exportingWa ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
+            WA Broadcast
+          </Button>
           <Button onClick={() => setShowImportDialog(true)} variant="outline" className="gap-2">
             <Upload className="w-4 h-4" />
             Importar CSV

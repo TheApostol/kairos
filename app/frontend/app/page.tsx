@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { getLeadStats, getOrderStats, getTodayTasks } from '@/lib/api'
+import { getLeadStats, getOrderStats, getTodayTasks, getDormantClients, getLowStock } from '@/lib/api'
 import {
   BarChart,
   Bar,
@@ -54,6 +54,8 @@ interface OrderStats {
   revenue_mes: number
   por_mes: Array<{ mes: string; count: number }>
   revenue_por_mes?: Array<{ mes: string; revenue: number }>
+  top_clientes?: Array<{ lead_id: number; empresa: string; total: number }>
+  top_productos?: Array<{ nombre: string; total: number }>
 }
 
 const ESTADO_COLORS: Record<string, string> = {
@@ -87,6 +89,8 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [kdScraping, setKdScraping] = useState(false)
   const [kdStatus, setKdStatus] = useState('')
+  const [dormantCount, setDormantCount] = useState<number | null>(null)
+  const [lowStockCount, setLowStockCount] = useState<number | null>(null)
 
   useEffect(() => {
     Promise.all([getLeadStats(), getOrderStats()])
@@ -100,6 +104,14 @@ export default function DashboardPage() {
     getTodayTasks()
       .then((res) => setOverdueTasksCount(res?.total ?? 0))
       .catch(() => setOverdueTasksCount(0))
+
+    getDormantClients(30)
+      .then((res) => setDormantCount(res?.total ?? 0))
+      .catch(() => setDormantCount(0))
+
+    getLowStock(5)
+      .then((res) => setLowStockCount(res?.total ?? 0))
+      .catch(() => setLowStockCount(0))
 
     getLeads({ limit: 8, page: 1 })
       .then((res) => setRecentLeads(res?.items ?? []))
@@ -222,6 +234,24 @@ export default function DashboardPage() {
       icon: Package,
       iconColor: '#C9A040',
       iconBg: 'rgba(201,160,64,0.12)',
+      href: '/catalog',
+    },
+    {
+      title: 'Clientes Inactivos',
+      value: dormantCount !== null ? dormantCount.toLocaleString('es-AR') : '—',
+      icon: Users,
+      iconColor: dormantCount && dormantCount > 0 ? '#f59e0b' : '#22c55e',
+      iconBg: dormantCount && dormantCount > 0 ? '#fffbeb' : '#f0fdf4',
+      urgent: false,
+      href: '/orders',
+    },
+    {
+      title: 'Stock Crítico',
+      value: lowStockCount !== null ? lowStockCount.toLocaleString('es-AR') : '—',
+      icon: Package,
+      iconColor: lowStockCount && lowStockCount > 0 ? '#dc2626' : '#22c55e',
+      iconBg: lowStockCount && lowStockCount > 0 ? '#fef2f2' : '#f0fdf4',
+      urgent: lowStockCount !== null && lowStockCount > 0,
       href: '/catalog',
     },
   ]
@@ -515,6 +545,51 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
+      )}
+      {/* Top Clients & Products */}
+      {((orderStats?.top_clientes?.length ?? 0) > 0 || (orderStats?.top_productos?.length ?? 0) > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {(orderStats?.top_clientes?.length ?? 0) > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold" style={{ color: '#4A3728' }}>Top Clientes por Revenue</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y">
+                  {(orderStats!.top_clientes ?? []).map((c, i) => (
+                    <Link key={c.lead_id} href={`/leads/${c.lead_id}`} className="flex items-center justify-between px-6 py-2.5 hover:bg-slate-50">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-xs font-bold text-slate-400 w-4 flex-shrink-0">{i + 1}</span>
+                        <span className="text-sm font-medium text-slate-800 truncate">{c.empresa}</span>
+                      </div>
+                      <span className="text-sm font-semibold ml-2 flex-shrink-0" style={{ color: '#C9A040' }}>{formatCurrency(c.total)}</span>
+                    </Link>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {(orderStats?.top_productos?.length ?? 0) > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold" style={{ color: '#4A3728' }}>Top Productos por Revenue</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y">
+                  {(orderStats!.top_productos ?? []).map((p, i) => (
+                    <div key={p.nombre} className="flex items-center justify-between px-6 py-2.5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-xs font-bold text-slate-400 w-4 flex-shrink-0">{i + 1}</span>
+                        <span className="text-sm font-medium text-slate-800 truncate">{p.nombre}</span>
+                      </div>
+                      <span className="text-sm font-semibold ml-2 flex-shrink-0" style={{ color: '#4A3728' }}>{formatCurrency(p.total)}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
     </div>
   )

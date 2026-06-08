@@ -346,6 +346,108 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
     return buffer.getvalue()
 
 
+def _build_price_list_pdf(products: list, lead: dict, es_mayorista: bool) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib.colors import HexColor, white
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm,
+                            topMargin=2 * cm, bottomMargin=2 * cm)
+
+    PRIMARY = HexColor("#4A3728")
+    ACCENT = HexColor("#C9A040")
+    LIGHT = HexColor("#f9f5ef")
+    GRAY = HexColor("#888888")
+
+    styles = getSampleStyleSheet()
+    empresa = lead.get("empresa", "Cliente")
+    tier_label = "Mayorista" if es_mayorista else "Minorista"
+
+    title_style = ParagraphStyle("PLT", fontName="Helvetica-Bold", fontSize=22, textColor=PRIMARY, alignment=TA_CENTER)
+    sub_style = ParagraphStyle("PLS", fontName="Helvetica", fontSize=12, textColor=GRAY, alignment=TA_CENTER)
+    emp_style = ParagraphStyle("PLE", fontName="Helvetica-Bold", fontSize=16, textColor=ACCENT, alignment=TA_CENTER)
+    col_header_style = ParagraphStyle("PLCH", fontName="Helvetica-Bold", fontSize=9, textColor=white)
+    normal = ParagraphStyle("PLN", fontName="Helvetica", fontSize=10, textColor=HexColor("#333333"))
+    price_style = ParagraphStyle("PLP", fontName="Helvetica-Bold", fontSize=10, textColor=ACCENT, alignment=TA_RIGHT)
+    footer_style = ParagraphStyle("PLF", fontName="Helvetica-Oblique", fontSize=8, textColor=GRAY, alignment=TA_CENTER)
+
+    def fmt(n):
+        try:
+            return f"$ {float(n):,.0f}".replace(",", ".")
+        except Exception:
+            return "—"
+
+    story = []
+    story.append(Paragraph("LISTA DE PRECIOS", title_style))
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(Paragraph(empresa, emp_style))
+    story.append(Paragraph(f"Precio {tier_label} · {datetime.now().strftime('%d/%m/%Y')}", sub_style))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(HRFlowable(width="100%", thickness=2, color=ACCENT))
+    story.append(Spacer(1, 0.5 * cm))
+
+    by_cat: dict = {}
+    for p in products:
+        cat = (p.get("categoria") or "Otros").replace("-", " ").title()
+        by_cat.setdefault(cat, []).append(p)
+
+    col_widths = [doc.width * 0.65, doc.width * 0.35]
+
+    for cat_name in sorted(by_cat):
+        cat_products = by_cat[cat_name]
+        header_table = Table(
+            [[Paragraph(cat_name.upper(), col_header_style), ""]],
+            colWidths=col_widths,
+        )
+        header_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("SPAN", (0, 0), (-1, 0)),
+        ]))
+        story.append(header_table)
+
+        rows = []
+        for p in cat_products:
+            if es_mayorista and p.get("precio_mayorista"):
+                price_val = p["precio_mayorista"]
+            elif p.get("precio_minorista"):
+                price_val = p["precio_minorista"]
+            else:
+                price_val = None
+            promo = p.get("precio_promo")
+            price_text = fmt(promo) + " ✦" if promo else (fmt(price_val) if price_val is not None else "Consultar")
+            rows.append([Paragraph(p.get("nombre", "—"), normal), Paragraph(price_text, price_style)])
+
+        if rows:
+            prod_table = Table(rows, colWidths=col_widths)
+            prod_table.setStyle(TableStyle([
+                ("ROWBACKGROUNDS", (0, 0), (-1, -1), [LIGHT, white]),
+                ("GRID", (0, 0), (-1, -1), 0.3, HexColor("#e0d8cc")),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ]))
+            story.append(prod_table)
+        story.append(Spacer(1, 0.4 * cm))
+
+    story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#e0d8cc")))
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(Paragraph(
+        f"Lista de precios {tier_label} — Precios en ARS — Sujetos a cambio sin previo aviso",
+        footer_style,
+    ))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
 # ─────────────────────────────────────────────
 # ROUTES
 # ─────────────────────────────────────────────
@@ -426,6 +528,49 @@ def delete_product(product_id: str):
         "updated_at": datetime.utcnow().isoformat(),
     })
     return {"message": "Product deactivated", "id": product_id}
+
+
+@router.get("/low-stock")
+def get_low_stock(threshold: int = 5):
+    products = db.select("products", filters={"activo": "eq.true"}, limit=5000)
+    low = []
+    for p in products:
+        stock_val = p.get("stock")
+        if stock_val is not None:
+            try:
+                if int(stock_val) <= threshold:
+                    low.append(p)
+            except (TypeError, ValueError):
+                pass
+    low.sort(key=lambda p: int(p.get("stock") or 0))
+    return {"items": low, "total": len(low), "threshold": threshold}
+
+
+@router.get("/price-list/{lead_id}")
+def get_price_list(lead_id: str):
+    leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
+    if not leads:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    lead = leads[0]
+
+    products = db.select(
+        "products",
+        filters={"activo": "eq.true"},
+        order="categoria.asc,nombre.asc",
+        limit=5000,
+    )
+    if not products:
+        raise HTTPException(status_code=404, detail="No products found")
+
+    es_mayorista = lead.get("estado") == "cliente"
+    pdf_bytes = _build_price_list_pdf(products, lead, es_mayorista)
+    empresa_slug = (lead.get("empresa") or "cliente").lower().replace(" ", "_")[:30]
+    filename = f"lista_precios_{empresa_slug}_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.get("/export-catalog")
