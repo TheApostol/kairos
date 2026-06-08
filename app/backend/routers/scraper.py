@@ -367,6 +367,74 @@ def _extract_from_soup(soup, result: dict) -> None:
             result["telefono"] = phone_m.group().strip()
 
 
+SKIP_SEARCH_DOMAINS = {
+    "facebook.com", "instagram.com", "twitter.com", "youtube.com",
+    "google.com", "maps.google", "tripadvisor", "yelp.com",
+    "mercadolibre", "infobae.com", "clarin.com", "lanacion.com",
+    "paginas-amarillas", "guialocal", "cylex", "dnb.com",
+    "duckduckgo.com", "bing.com", "wikipedia.org", "wikidata.org",
+    "pinterest.com", "linkedin.com", "tiktok.com", "whatsapp.com",
+}
+
+
+def _search_for_website(nombre: str, ciudad: str = "", provincia: str = "") -> str:
+    """DuckDuckGo search to find a business's website by name + location."""
+    import httpx
+    from urllib.parse import quote_plus, urlparse, parse_qs, unquote
+
+    if not nombre:
+        return ""
+
+    location = " ".join(filter(None, [ciudad, provincia]))
+    query = f'"{nombre}" {location} Argentina'.strip()
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "es-AR,es;q=0.9",
+        }
+        with httpx.Client(timeout=8, follow_redirects=True) as client:
+            resp = client.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query, "kl": "ar-es"},
+                headers=headers,
+            )
+        if resp.status_code != 200:
+            return ""
+
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            return ""
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        for a in soup.find_all("a", class_="result__a"):
+            href = a.get("href", "")
+            # DDG wraps links: //duckduckgo.com/l/?uddg=REAL_URL
+            if "uddg=" in href:
+                try:
+                    if href.startswith("//"):
+                        href = "https:" + href
+                    real_url = unquote(parse_qs(urlparse(href).query).get("uddg", [""])[0])
+                except Exception:
+                    continue
+            else:
+                real_url = href
+
+            if not real_url.startswith("http"):
+                continue
+
+            domain = urlparse(real_url).netloc.lower().replace("www.", "")
+            if domain and not any(skip in domain for skip in SKIP_SEARCH_DOMAINS):
+                return real_url.split("?")[0].rstrip("/")
+
+    except Exception:
+        pass
+
+    return ""
+
+
 def _scrape_website(url: str) -> dict:
     import httpx
     try:
@@ -612,13 +680,18 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
+        COLS = "id,empresa,website,email,telefono,instagram,whatsapp,ciudad,provincia"
+
         if lead_ids:
             ids_str = ",".join(lead_ids)
-            all_leads = db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
+            all_leads = db.raw_select("leads", {
+                "select": COLS,
+                "id": f"in.({ids_str})",
+                "limit": len(lead_ids),
+            })
         else:
             all_leads = db.raw_select("leads", {
-                "select": "id,empresa,website,email,telefono,instagram,whatsapp",
-                "website": "neq.",
+                "select": COLS,
                 "or": "(email.is.null,email.eq.)",
                 "order": "id.asc",
                 "limit": 300,
@@ -630,12 +703,29 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
         db.update("scraper_jobs", job_id, {"total": total})
 
         for i, lead in enumerate(all_leads):
-            website = lead.get("website", "")
+            website = (lead.get("website") or "").strip()
+            update_data = {}
+
+            # No website from Google Maps → search DuckDuckGo for one
             if not website:
+                found = _search_for_website(
+                    lead.get("empresa", ""),
+                    lead.get("ciudad", ""),
+                    lead.get("provincia", ""),
+                )
+                if found:
+                    website = found
+                    update_data["website"] = found
+                    lead["website"] = found
+                time.sleep(1)  # rate-limit search requests
+
+            if not website:
+                # Still nothing to scrape
+                progress = int(((i + 1) / max(total, 1)) * 100)
+                db.update("scraper_jobs", job_id, {"progress": progress, "new_found": enriched_count})
                 continue
 
             enrich = _scrape_website(website)
-            update_data = {}
 
             for field in ["email", "instagram", "whatsapp", "telefono"]:
                 if enrich.get(field) and not lead.get(field):
@@ -650,7 +740,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
 
             del enrich, update_data
 
-            # Run GC every 25 leads to reclaim BS4 / httpx memory
+            # GC every 25 leads to reclaim BS4 / httpx memory
             if (i + 1) % 25 == 0:
                 gc.collect()
 
