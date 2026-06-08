@@ -625,6 +625,10 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
             detail="Google API key required. Pass google_api_key in the request body or set GOOGLE_API_KEY env var.",
         )
 
+    # Auto-fail any stuck jobs before checking for conflicts
+    stuck = db.raw_select("scraper_jobs", {"select": "id,status,started_at,created_at", "status": "in.(pending,running)", "limit": 10})
+    _auto_fail_stuck_jobs(stuck)
+
     # Prevent duplicate concurrent jobs
     active = db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
     if active:
@@ -698,7 +702,7 @@ def run_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
     return start_scraper(body, background_tasks)
 
 
-STUCK_JOB_TIMEOUT_MINUTES = 30
+STUCK_JOB_TIMEOUT_MINUTES = 20
 
 
 def _auto_fail_stuck_jobs(jobs: list) -> list:
@@ -804,6 +808,10 @@ async def stream_latest_progress():
 
 @router.post("/enrich")
 def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks):
+    # Auto-fail stuck jobs before conflict check
+    stuck = db.raw_select("scraper_jobs", {"select": "id,status,started_at,created_at", "status": "in.(pending,running)", "limit": 10})
+    _auto_fail_stuck_jobs(stuck)
+
     # Prevent duplicate concurrent jobs
     active = db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
     if active:
