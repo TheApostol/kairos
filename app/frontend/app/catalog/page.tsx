@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
 import { getProducts, getProductCategories, createProduct, updateProduct, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, getProductsCsvUrl } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -34,6 +35,8 @@ interface Product {
   categoria?: string
   precio_minorista?: number
   precio_mayorista?: number
+  precio_promo?: number
+  cantidad_mayorista?: number
   stock?: number
   activo?: boolean
   destacado?: boolean
@@ -57,6 +60,8 @@ const emptyForm = {
   categoria: '',
   precio_minorista: '',
   precio_mayorista: '',
+  precio_promo: '',
+  cantidad_mayorista: '6',
   stock: '',
   activo: true,
   destacado: false,
@@ -227,6 +232,8 @@ export default function CatalogPage() {
       categoria: product.categoria ?? '',
       precio_minorista: String(product.precio_minorista ?? ''),
       precio_mayorista: String(product.precio_mayorista ?? ''),
+      precio_promo: String(product.precio_promo ?? ''),
+      cantidad_mayorista: String(product.cantidad_mayorista ?? 6),
       stock: String(product.stock ?? ''),
       activo: product.activo ?? true,
       destacado: product.destacado ?? false,
@@ -244,6 +251,8 @@ export default function CatalogPage() {
         categoria: form.categoria || undefined,
         precio_minorista: form.precio_minorista ? parseFloat(form.precio_minorista) : undefined,
         precio_mayorista: form.precio_mayorista ? parseFloat(form.precio_mayorista) : undefined,
+        precio_promo: form.precio_promo ? parseFloat(form.precio_promo) : undefined,
+        cantidad_mayorista: form.cantidad_mayorista ? parseInt(form.cantidad_mayorista) : undefined,
         stock: form.stock ? parseInt(form.stock) : undefined,
         activo: form.activo,
         destacado: form.destacado,
@@ -460,19 +469,21 @@ export default function CatalogPage() {
               key={product.id}
               className={`relative overflow-hidden ${product.activo === false ? 'opacity-60' : ''}`}
             >
-              <div className="bg-gradient-to-br from-slate-100 to-slate-200 h-36 flex items-center justify-center">
+              <div className="relative bg-gradient-to-br from-slate-100 to-slate-200 h-40 flex items-center justify-center overflow-hidden">
                 {product.imagen_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <Image
                     src={product.imagen_url}
                     alt={product.nombre}
-                    className="h-full w-full object-cover"
+                    fill
+                    className="object-contain p-1"
+                    sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+                    loading="lazy"
                   />
                 ) : (
                   <Package className="w-10 h-10 text-slate-300" />
                 )}
                 {product.destacado && (
-                  <div className="absolute top-2 right-2 bg-amber-400 text-white rounded-full p-1">
+                  <div className="absolute top-2 right-2 bg-amber-400 text-white rounded-full p-1 z-10">
                     <Star className="w-3.5 h-3.5" />
                   </div>
                 )}
@@ -498,15 +509,19 @@ export default function CatalogPage() {
 
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <div className="bg-slate-50 rounded p-2">
-                    <p className="text-xs text-slate-500">Minorista</p>
+                    <p className="text-xs text-slate-400">
+                      1{product.cantidad_mayorista && product.cantidad_mayorista > 1 ? `–${product.cantidad_mayorista - 1}` : ''} u.
+                    </p>
                     <p className="text-sm font-semibold text-slate-900">
-                      {formatCurrency(product.precio_minorista)}
+                      {formatCurrency(product.precio_promo ?? product.precio_minorista)}
                     </p>
                   </div>
-                  <div className="bg-blue-50 rounded p-2">
-                    <p className="text-xs text-blue-600">Mayorista</p>
-                    <p className="text-sm font-semibold text-blue-900">
-                      {formatCurrency(product.precio_mayorista)}
+                  <div className="bg-amber-50 rounded p-2">
+                    <p className="text-xs text-amber-700">
+                      {product.cantidad_mayorista ?? 6}+ u.
+                    </p>
+                    <p className="text-sm font-semibold text-amber-900">
+                      {product.precio_mayorista ? formatCurrency(product.precio_mayorista) : '—'}
                     </p>
                   </div>
                 </div>
@@ -617,9 +632,9 @@ export default function CatalogPage() {
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>P. Minorista</Label>
+                <Label>Precio 1 u.</Label>
                 <Input
                   type="number"
                   value={form.precio_minorista}
@@ -628,7 +643,25 @@ export default function CatalogPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>P. Mayorista</Label>
+                <Label>Precio promo / oferta</Label>
+                <Input
+                  type="number"
+                  value={form.precio_promo}
+                  onChange={(e) => setForm({ ...form, precio_promo: e.target.value })}
+                  placeholder="opcional"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Cant. mínima mayorista</Label>
+                <Input
+                  type="number"
+                  value={form.cantidad_mayorista}
+                  onChange={(e) => setForm({ ...form, cantidad_mayorista: e.target.value })}
+                  placeholder="6"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Precio {form.cantidad_mayorista || 6}+ u.</Label>
                 <Input
                   type="number"
                   value={form.precio_mayorista}
@@ -636,15 +669,15 @@ export default function CatalogPage() {
                   placeholder="0"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label>Stock</Label>
-                <Input
-                  type="number"
-                  value={form.stock}
-                  onChange={(e) => setForm({ ...form, stock: e.target.value })}
-                  placeholder="0"
-                />
-              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Stock</Label>
+              <Input
+                type="number"
+                value={form.stock}
+                onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                placeholder="0"
+              />
             </div>
 
             <div className="flex items-center gap-6 pt-2">

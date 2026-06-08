@@ -24,6 +24,7 @@ class ProductCreate(BaseModel):
     precio_minorista: Optional[float] = None
     precio_mayorista: Optional[float] = None
     precio_promo: Optional[float] = None
+    cantidad_mayorista: Optional[int] = None
     stock: Optional[int] = None
     sku: Optional[str] = None
     imagen_url: Optional[str] = None
@@ -40,6 +41,7 @@ class ProductUpdate(BaseModel):
     precio_minorista: Optional[float] = None
     precio_mayorista: Optional[float] = None
     precio_promo: Optional[float] = None
+    cantidad_mayorista: Optional[int] = None
     stock: Optional[int] = None
     sku: Optional[str] = None
     imagen_url: Optional[str] = None
@@ -891,7 +893,7 @@ def kairosdis_scraper_status():
 # ─────────────────────────────────────────────
 
 SHEET_COLUMNS = ["id", "sku", "nombre", "categoria", "precio_minorista",
-                 "precio_mayorista", "precio_promo", "stock", "activo"]
+                 "precio_mayorista", "precio_promo", "cantidad_mayorista", "stock", "activo"]
 
 _SHEET_ID_KEY = "google_sheet_id"
 _sheet_id_store: dict = {"id": ""}
@@ -905,7 +907,7 @@ def export_products_csv():
     output = io.StringIO()
     writer = _csv.writer(output)
     writer.writerow(["ID", "SKU", "Nombre", "Categoría", "Precio Minorista",
-                     "Precio Mayorista", "Precio Promo", "Stock", "Activo"])
+                     "Precio Mayorista", "Precio Promo", "Cant. Mayorista", "Stock", "Activo"])
     for p in products:
         writer.writerow([
             p.get("id", ""),
@@ -915,6 +917,7 @@ def export_products_csv():
             p.get("precio_minorista", ""),
             p.get("precio_mayorista", ""),
             p.get("precio_promo", ""),
+            p.get("cantidad_mayorista", 6),
             p.get("stock", ""),
             "Sí" if p.get("activo") is not False else "No",
         ])
@@ -977,6 +980,13 @@ def sync_from_google_sheet(body: SheetSyncRequest):
                     update_data[db_col] = float(val.replace(",", "."))
                 except ValueError:
                     pass
+
+        cant_may = (row.get("Cant. Mayorista") or "").strip()
+        if cant_may:
+            try:
+                update_data["cantidad_mayorista"] = int(float(cant_may))
+            except ValueError:
+                pass
 
         stock_str = (row.get("Stock") or "").strip()
         if stock_str:
