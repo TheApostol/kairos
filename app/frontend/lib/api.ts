@@ -209,11 +209,23 @@ export async function getKairosdisScraperStatus() {
 }
 
 // Google Sheets Sync
-export async function syncFromGoogleSheet(sheetId: string) {
-  return apiFetch('/products/sync-from-sheet', {
+export async function getSheetConfig() {
+  return apiFetch('/products/sheet-config')
+}
+
+export async function setSheetId(sheetId: string) {
+  return apiFetch('/products/set-sheet', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sheet_id: sheetId }),
+  })
+}
+
+export async function syncFromGoogleSheet(sheetId?: string) {
+  return apiFetch('/products/sync-from-sheet', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(sheetId ? { sheet_id: sheetId } : {}),
   })
 }
 

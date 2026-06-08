@@ -744,33 +744,185 @@ def kairosdis_scraper_status():
 # GOOGLE SHEETS SYNC
 # ─────────────────────────────────────────────
 
-SHEET_COLUMNS = ["id", "sku", "nombre", "categoria", "precio_minorista",
-                 "precio_mayorista", "precio_promo", "stock", "activo"]
+SHEET_EXPORT_COLUMNS = ["id", "sku", "nombre", "categoria", "descripcion",
+                        "precio_minorista", "precio_mayorista", "precio_promo",
+                        "stock", "activo", "imagen_url"]
 
-_SHEET_ID_KEY = "google_sheet_id"
-_sheet_id_store: dict = {"id": ""}
+# In-memory store for sheet config and last-sync state.
+# Seeded from GOOGLE_SHEET_ID env var on first access.
+_sheet_store: dict = {
+    "sheet_id": "",
+    "last_sync": None,       # ISO string
+    "last_result": None,     # dict with created/updated/skipped/errors
+}
+
+
+def _get_sheet_id() -> str:
+    from config import settings
+    return _sheet_store["sheet_id"] or settings.GOOGLE_SHEET_ID
+
+
+def _parse_price(val: str) -> Optional[float]:
+    v = val.strip().replace(",", ".").replace("$", "").replace(" ", "")
+    try:
+        return float(v) if v else None
+    except ValueError:
+        return None
+
+
+def _parse_int(val: str) -> Optional[int]:
+    v = val.strip()
+    try:
+        return int(float(v)) if v else None
+    except ValueError:
+        return None
+
+
+def _parse_bool(val: str) -> Optional[bool]:
+    v = val.strip().lower()
+    if v in ("sí", "si", "yes", "true", "1", "activo"):
+        return True
+    if v in ("no", "false", "0", "inactivo"):
+        return False
+    return None
+
+
+def _normalize(s: str) -> str:
+    return s.strip().lower()
+
+
+def _run_sheet_sync(sheet_id: str) -> dict:
+    """
+    Core sync logic. Reads the Google Sheet and creates or updates products.
+    Rows with a known ID → update.  Rows with no ID but a Nombre → create.
+    All fields are supported: Nombre, Categoría, Descripción, Precio Minorista,
+    Precio Mayorista, Precio Promo, Stock, Activo, Imagen URL.
+    Returns {"created": n, "updated": n, "skipped": n, "errors": [...]}
+    """
+    import csv as _csv
+    import httpx as _httpx
+
+    sheet_id = sheet_id.strip()
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&id={sheet_id}"
+
+    try:
+        resp = _httpx.get(csv_url, follow_redirects=True, timeout=30)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"No se pudo leer la hoja: {exc}")
+
+    reader = _csv.DictReader(io.StringIO(resp.text))
+
+    # Build lookup maps from existing products (id → product, nombre_lower → product)
+    existing = db.select_all("products", select_cols="id,nombre")
+    by_id    = {str(p["id"]): p for p in existing}
+    by_name  = {_normalize(p["nombre"]): p for p in existing}
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors: list = []
+
+    for row in reader:
+        nombre = (row.get("Nombre") or "").strip()
+        if not nombre:
+            skipped += 1
+            continue
+
+        # Build the full data dict from all recognised columns
+        data: dict = {}
+
+        if nombre:
+            data["nombre"] = nombre
+
+        cat = (row.get("Categoría") or row.get("Categoria") or "").strip()
+        if cat:
+            data["categoria"] = cat.lower().replace(" ", "-")
+
+        desc = (row.get("Descripción") or row.get("Descripcion") or "").strip()
+        if desc:
+            data["descripcion"] = desc
+
+        for src, dst in [
+            ("Precio Minorista", "precio_minorista"),
+            ("Precio Mayorista", "precio_mayorista"),
+            ("Precio Promo",     "precio_promo"),
+        ]:
+            v = _parse_price(row.get(src) or "")
+            if v is not None:
+                data[dst] = v
+
+        stock_v = _parse_int(row.get("Stock") or "")
+        if stock_v is not None:
+            data["stock"] = stock_v
+
+        activo_v = _parse_bool(row.get("Activo") or "")
+        if activo_v is not None:
+            data["activo"] = activo_v
+
+        img = (row.get("Imagen URL") or row.get("Imagen") or "").strip()
+        if img:
+            data["imagen_url"] = img
+
+        sku = (row.get("SKU") or "").strip()
+        if sku:
+            data["sku"] = sku
+
+        # Resolve target product
+        row_id = (row.get("ID") or "").strip()
+        target = by_id.get(row_id) or by_name.get(_normalize(nombre))
+
+        data["updated_at"] = datetime.utcnow().isoformat()
+
+        if target:
+            # UPDATE existing product — only send changed fields
+            try:
+                db.update("products", target["id"], data)
+                updated += 1
+            except Exception as exc:
+                errors.append(f"{nombre}: {exc}")
+        else:
+            # CREATE new product
+            data.setdefault("activo", True)
+            try:
+                new_p = db.insert("products", data)
+                # Add to lookup so duplicate rows in the sheet don't create twice
+                if new_p and new_p.get("id"):
+                    by_id[str(new_p["id"])] = new_p
+                    by_name[_normalize(nombre)] = new_p
+                created += 1
+            except Exception as exc:
+                errors.append(f"{nombre} (crear): {exc}")
+
+    result = {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:10]}
+    _sheet_store["last_sync"]   = datetime.utcnow().isoformat()
+    _sheet_store["last_result"] = result
+    return result
 
 
 @router.get("/export-csv")
 def export_products_csv():
-    """Export all products as CSV for import into Google Sheets."""
+    """Export all products as CSV — use this as the starting template for the Google Sheet."""
     import csv as _csv
-    products = db.select_all("products", select_cols=",".join(SHEET_COLUMNS))
+    products = db.select_all("products", select_cols=",".join(SHEET_EXPORT_COLUMNS))
     output = io.StringIO()
     writer = _csv.writer(output)
-    writer.writerow(["ID", "SKU", "Nombre", "Categoría", "Precio Minorista",
-                     "Precio Mayorista", "Precio Promo", "Stock", "Activo"])
+    writer.writerow(["ID", "SKU", "Nombre", "Categoría", "Descripción",
+                     "Precio Minorista", "Precio Mayorista", "Precio Promo",
+                     "Stock", "Activo", "Imagen URL"])
     for p in products:
         writer.writerow([
             p.get("id", ""),
             p.get("sku", ""),
             p.get("nombre", ""),
             (p.get("categoria") or "").replace("-", " ").title(),
+            p.get("descripcion", ""),
             p.get("precio_minorista", ""),
             p.get("precio_mayorista", ""),
             p.get("precio_promo", ""),
             p.get("stock", ""),
             "Sí" if p.get("activo") is not False else "No",
+            p.get("imagen_url", ""),
         ])
     csv_bytes = output.getvalue().encode("utf-8-sig")
     return StreamingResponse(
@@ -780,84 +932,47 @@ def export_products_csv():
     )
 
 
-class SheetSyncRequest(BaseModel):
+@router.get("/sheet-config")
+def get_sheet_config():
+    """Return the configured sheet ID, last sync time, and last sync result."""
+    return {
+        "sheet_id": _get_sheet_id(),
+        "last_sync": _sheet_store["last_sync"],
+        "last_result": _sheet_store["last_result"],
+    }
+
+
+class SetSheetRequest(BaseModel):
     sheet_id: str
 
 
+@router.post("/set-sheet")
+def set_sheet_id(body: SetSheetRequest):
+    """Save the Google Sheet ID and immediately run the first sync."""
+    raw = body.sheet_id.strip()
+    # Accept full URL like https://docs.google.com/spreadsheets/d/SHEET_ID/edit
+    import re as _re
+    m = _re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", raw)
+    sheet_id = m.group(1) if m else raw
+    _sheet_store["sheet_id"] = sheet_id
+    result = _run_sheet_sync(sheet_id)
+    return {"sheet_id": sheet_id, **result}
+
+
+class SheetSyncRequest(BaseModel):
+    sheet_id: Optional[str] = None
+
+
 @router.post("/sync-from-sheet")
-def sync_from_google_sheet(body: SheetSyncRequest):
+def sync_from_google_sheet(body: SheetSyncRequest = SheetSyncRequest()):
     """
-    Read a Google Sheet (must be shared as 'Anyone with the link can view')
-    and update prices, stock, and activo status in the CRM for matching SKUs.
-
-    The sheet must have columns: ID, SKU, Nombre, Precio Minorista,
-    Precio Mayorista, Precio Promo, Stock, Activo
+    Sync catalog from Google Sheet. Uses the stored sheet ID if none is provided.
+    The sheet must be shared as 'Anyone with the link can view'.
+    Rows with a known ID or matching Nombre are updated; new rows are created.
     """
-    import csv as _csv
-    import httpx as _httpx
-
-    sheet_id = body.sheet_id.strip()
-    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&id={sheet_id}"
-
-    try:
-        resp = _httpx.get(csv_url, follow_redirects=True, timeout=30)
-        resp.raise_for_status()
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"No se pudo leer la hoja: {exc}")
-
-    content = resp.text
-    reader = _csv.DictReader(io.StringIO(content))
-
-    updated = 0
-    skipped = 0
-    errors = []
-
-    for row in reader:
-        product_id = (row.get("ID") or "").strip()
-        if not product_id:
-            skipped += 1
-            continue
-
-        update_data: dict = {}
-
-        for src_col, db_col in [
-            ("Precio Minorista", "precio_minorista"),
-            ("Precio Mayorista", "precio_mayorista"),
-            ("Precio Promo", "precio_promo"),
-        ]:
-            val = (row.get(src_col) or "").strip()
-            if val:
-                try:
-                    update_data[db_col] = float(val.replace(",", "."))
-                except ValueError:
-                    pass
-
-        stock_str = (row.get("Stock") or "").strip()
-        if stock_str:
-            try:
-                update_data["stock"] = int(float(stock_str))
-            except ValueError:
-                pass
-
-        activo_str = (row.get("Activo") or "").strip().lower()
-        if activo_str in ("sí", "si", "yes", "true", "1"):
-            update_data["activo"] = True
-        elif activo_str in ("no", "false", "0"):
-            update_data["activo"] = False
-
-        if not update_data:
-            skipped += 1
-            continue
-
-        update_data["updated_at"] = datetime.utcnow().isoformat()
-        try:
-            db.update("products", product_id, update_data)
-            updated += 1
-        except Exception as exc:
-            errors.append(f"{product_id}: {exc}")
-
-    return {
-        "updated": updated,
-        "skipped": skipped,
-        "errors": errors[:10],
-    }
+    sheet_id = (body.sheet_id or "").strip() or _get_sheet_id()
+    if not sheet_id:
+        raise HTTPException(status_code=400, detail="No hay hoja configurada. Guardá el Sheet ID primero.")
+    if body.sheet_id:
+        _sheet_store["sheet_id"] = sheet_id
+    return _run_sheet_sync(sheet_id)
