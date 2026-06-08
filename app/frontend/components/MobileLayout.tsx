@@ -3,12 +3,15 @@
 import { useState } from 'react'
 import Image from 'next/image'
 import Sidebar from './Sidebar'
+import ScraperBanner from './ScraperBanner'
+import { ScraperStatusProvider } from '@/contexts/ScraperStatusContext'
 import { Menu } from 'lucide-react'
 
 export default function MobileLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
+    <ScraperStatusProvider>
     <div className="flex h-screen overflow-hidden" style={{ backgroundColor: '#FAF7F2' }}>
       {/* Mobile backdrop */}
       {sidebarOpen && (
@@ -63,6 +66,8 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
           </div>
         </main>
       </div>
+      <ScraperBanner />
     </div>
+    </ScraperStatusProvider>
   )
 }
