@@ -1,6 +1,7 @@
 import io
 import re
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, List
@@ -9,6 +10,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services.supabase_client import db
+
+# In-memory store for async PDF export jobs {job_id: {status, bytes, filename, error}}
+_pdf_jobs: dict = {}
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -592,6 +596,61 @@ def get_price_list(lead_id: str):
     pdf_bytes = _build_price_list_pdf(products, lead, es_mayorista)
     empresa_slug = (lead.get("empresa") or "cliente").lower().replace(" ", "_")[:30]
     filename = f"lista_precios_{empresa_slug}_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _run_pdf_export(job_id: str, product_ids: Optional[List[str]], titulo: str, incluir_precios: bool):
+    try:
+        if product_ids:
+            ids_str = ",".join(product_ids)
+            products = db.raw_select("products", {
+                "select": "*",
+                "id": f"in.({ids_str})",
+                "activo": "eq.true",
+            })
+        else:
+            products = db.select_all("products", filters={"activo": "eq.true"})
+            products.sort(key=lambda p: (p.get("orden") is None, p.get("orden") or 0, p.get("nombre") or ""))
+        if not products:
+            _pdf_jobs[job_id] = {"status": "error", "bytes": None, "error": "No se encontraron productos"}
+            return
+        pdf_bytes = _build_pdf_catalog(products, titulo, incluir_precios)
+        filename = f"catalogo_kairos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        _pdf_jobs[job_id] = {"status": "done", "bytes": pdf_bytes, "filename": filename, "error": None}
+    except Exception as exc:
+        _pdf_jobs[job_id] = {"status": "error", "bytes": None, "error": str(exc)}
+
+
+@router.post("/export-catalog/start")
+def start_export_catalog(body: CatalogExportRequest, background_tasks: BackgroundTasks):
+    job_id = str(uuid.uuid4())
+    _pdf_jobs[job_id] = {"status": "pending", "bytes": None, "error": None}
+    background_tasks.add_task(
+        _run_pdf_export, job_id, body.product_ids, body.titulo, body.incluir_precios
+    )
+    return {"job_id": job_id}
+
+
+@router.get("/export-catalog/status/{job_id}")
+def export_catalog_status(job_id: str):
+    entry = _pdf_jobs.get(job_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+    return {"status": entry["status"], "error": entry.get("error")}
+
+
+@router.get("/export-catalog/download/{job_id}")
+def export_catalog_download(job_id: str):
+    entry = _pdf_jobs.get(job_id)
+    if not entry or entry["status"] != "done":
+        raise HTTPException(status_code=404, detail="PDF no listo")
+    pdf_bytes = entry["bytes"]
+    filename = entry.get("filename", "catalogo.pdf")
+    _pdf_jobs.pop(job_id, None)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

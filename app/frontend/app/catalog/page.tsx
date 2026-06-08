@@ -153,6 +153,7 @@ export default function CatalogPage() {
   const [selectedForPdf, setSelectedForPdf] = useState<Set<number>>(new Set())
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [pdfError, setPdfError] = useState('')
+  const [pdfStep, setPdfStep] = useState('')
 
   // Google Sheets sync
   const SHEET_ID = '1QSynaIHWtcXiKcG-YuqAy2p8oRlOW5Bh5Qj3P0zGJA'
@@ -273,18 +274,45 @@ export default function CatalogPage() {
   const handleExportPdf = async () => {
     setDownloadingPdf(true)
     setPdfError('')
-    const params = new URLSearchParams({ title: pdfTitle })
-    if (!pdfSelectAll) {
-      Array.from(selectedForPdf).forEach((id) => params.append('product_ids', String(id)))
-    }
+    setPdfStep('Iniciando...')
     try {
-      const res = await fetch(`${getApiUrl('/products/export-catalog')}?${params.toString()}`)
-      if (!res.ok) throw new Error(await res.text())
-      const blob = await res.blob()
+      // 1. Start background job
+      const body: Record<string, unknown> = { titulo: pdfTitle, incluir_precios: true }
+      if (!pdfSelectAll && selectedForPdf.size > 0)
+        body.product_ids = Array.from(selectedForPdf).map(String)
+
+      const startRes = await fetch(getApiUrl('/products/export-catalog/start'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!startRes.ok) throw new Error(await startRes.text())
+      const { job_id } = await startRes.json()
+
+      // 2. Poll until done (max 3 minutes)
+      setPdfStep('Generando PDF...')
+      let elapsed = 0
+      while (elapsed < 180) {
+        await new Promise(r => setTimeout(r, 3000))
+        elapsed += 3
+        const statusRes = await fetch(getApiUrl(`/products/export-catalog/status/${job_id}`))
+        if (!statusRes.ok) throw new Error('Error al verificar estado')
+        const { status, error } = await statusRes.json()
+        if (status === 'error') throw new Error(error || 'Error al generar el PDF')
+        if (status === 'done') break
+        setPdfStep(`Generando PDF... ${elapsed}s`)
+        if (elapsed >= 180) throw new Error('El PDF tardó demasiado. Intentá con menos productos.')
+      }
+
+      // 3. Download
+      setPdfStep('Descargando...')
+      const dlRes = await fetch(getApiUrl(`/products/export-catalog/download/${job_id}`))
+      if (!dlRes.ok) throw new Error(await dlRes.text())
+      const blob = await dlRes.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `catalogo_kairos_${new Date().toISOString().slice(0,10)}.pdf`
+      a.download = `catalogo_kairos_${new Date().toISOString().slice(0, 10)}.pdf`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -294,6 +322,7 @@ export default function CatalogPage() {
       setPdfError(e instanceof Error ? e.message : 'Error al generar el PDF')
     } finally {
       setDownloadingPdf(false)
+      setPdfStep('')
     }
   }
 
@@ -733,11 +762,14 @@ export default function CatalogPage() {
           {pdfError && (
             <p className="text-sm text-red-600 px-1">{pdfError}</p>
           )}
+          {downloadingPdf && pdfStep && (
+            <p className="text-xs text-slate-500 px-1">{pdfStep}</p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowPdfDialog(false); setPdfError('') }}>Cancelar</Button>
+            <Button variant="outline" onClick={() => { setShowPdfDialog(false); setPdfError(''); setPdfStep('') }} disabled={downloadingPdf}>Cancelar</Button>
             <Button onClick={handleExportPdf} disabled={(!pdfSelectAll && selectedForPdf.size === 0) || downloadingPdf} className="gap-2">
               {downloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-              {downloadingPdf ? 'Generando...' : 'Descargar PDF'}
+              {downloadingPdf ? (pdfStep || 'Generando...') : 'Descargar PDF'}
             </Button>
           </DialogFooter>
         </DialogContent>
