@@ -217,6 +217,12 @@ MAYORISTA_QUERIES = [
 ]
 
 
+class PlacesAPIError(Exception):
+    """Raised when the Google Places API itself reports an error status
+    (bad/missing key, quota exceeded, etc). The HTTP request still returns
+    200 OK in these cases, so this can't be caught via raise_for_status()."""
+
+
 def _places_text_search(api_key: str, query: str, page_token: Optional[str] = None) -> dict:
     import httpx
     url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
@@ -232,7 +238,12 @@ def _places_text_search(api_key: str, query: str, page_token: Optional[str] = No
     with httpx.Client(timeout=15) as client:
         resp = client.get(url, params=params)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+
+    status = data.get("status")
+    if status not in ("OK", "ZERO_RESULTS"):
+        raise PlacesAPIError(f"{status}: {data.get('error_message', 'Google Places API error')}")
+    return data
 
 
 def _place_details(api_key: str, place_id: str) -> dict:
@@ -748,6 +759,8 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                         break
                     page += 1
 
+                except PlacesAPIError:
+                    raise
                 except Exception:
                     break
 
