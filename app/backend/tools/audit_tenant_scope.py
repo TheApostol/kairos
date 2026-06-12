@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Tenant-scope audit guardrail for Kairos/Polkorp SaaS backend.
+
+Run from repository root:
+
+    python app/backend/tools/audit_tenant_scope.py
+
+Purpose:
+- Prevent accidental raw `db` usage in tenant routers.
+- Allow explicitly public/platform files.
+- Encourage all tenant runtime access through `current_org.db` or `ScopedSupabaseClient`.
+
+This is intentionally static and conservative. If it flags a false positive,
+prefer refactoring the code for clarity instead of disabling the check.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+ROUTERS = ROOT / "app" / "backend" / "routers"
+
+# Public/platform routers are allowed to use raw service client when they
+# explicitly apply org filters or operate outside a tenant request context.
+ALLOWED_RAW_DB_FILES = {
+    "public.py",          # unauthenticated public catalog; manually filters by organization slug/id
+    "organizations.py",   # platform membership/invitation bootstrap; uses auth helpers + explicit filters
+}
+
+RAW_IMPORT_RE = re.compile(r"from\s+services\.supabase_client\s+import\s+([^\n]+)")
+RAW_DB_CALL_RE = re.compile(r"(?<![A-Za-z0-9_])db\.(select|select_all|raw_select|insert|update|delete|count)\(")
+
+
+def is_allowed_raw_import(imports: str) -> bool:
+    names = {part.strip().split(" as ")[0] for part in imports.split(",")}
+    # ScopedSupabaseClient import is valid for background jobs / SSE closures.
+    # Raw `db` import is only acceptable in whitelisted files.
+    return "db" not in names
+
+
+def audit_file(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    rel = path.relative_to(ROOT)
+    errors: list[str] = []
+
+    raw_import_match = RAW_IMPORT_RE.search(text)
+    if path.name not in ALLOWED_RAW_DB_FILES and raw_import_match:
+        imports = raw_import_match.group(1)
+        if not is_allowed_raw_import(imports):
+            errors.append(f"{rel}: imports raw `db`; tenant routers should use current_org.db or ScopedSupabaseClient")
+
+    if path.name not in ALLOWED_RAW_DB_FILES:
+        for match in RAW_DB_CALL_RE.finditer(text):
+            line_no = text[: match.start()].count("\n") + 1
+            line = text.splitlines()[line_no - 1].strip()
+            # Allow constructing ScopedSupabaseClient(db, org_id) for background tasks.
+            if "ScopedSupabaseClient(db" in line:
+                continue
+            errors.append(f"{rel}:{line_no}: raw tenant DB call: {line}")
+
+    return errors
+
+
+def main() -> int:
+    if not ROUTERS.exists():
+        print(f"Routers directory not found: {ROUTERS}", file=sys.stderr)
+        return 2
+
+    errors: list[str] = []
+    for path in sorted(ROUTERS.glob("*.py")):
+        errors.extend(audit_file(path))
+
+    if errors:
+        print("Tenant scope audit FAILED:\n")
+        for err in errors:
+            print(f"- {err}")
+        print("\nFix: use `current_org.db` inside request handlers or `ScopedSupabaseClient(db, org_id)` inside background jobs/SSE closures.")
+        return 1
+
+    print("Tenant scope audit passed: no unsafe raw `db` usage found in tenant routers.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
