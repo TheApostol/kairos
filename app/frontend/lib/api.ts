@@ -17,7 +17,18 @@ export async function apiFetch(path: string, options?: RequestInit) {
       ...(options?.headers ?? {}),
     },
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) {
+    const text = await res.text()
+    if (
+      res.status === 403 &&
+      text.includes('not a member of any organization') &&
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/onboarding')
+    ) {
+      window.location.href = '/onboarding'
+    }
+    throw new Error(text)
+  }
   return res.json()
 }
 

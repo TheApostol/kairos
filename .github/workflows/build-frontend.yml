@@ -32,6 +32,8 @@ jobs:
         run: npm run build
         env:
           NEXT_PUBLIC_API_URL: https://kairos-anuu.onrender.com
+          NEXT_PUBLIC_SUPABASE_URL: https://gachxhquivfvwejytsbb.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
 
       - name: Commit build artifacts
         run: |

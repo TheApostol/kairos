@@ -6,9 +6,14 @@ import { useAuth } from '@/contexts/AuthContext'
 import MobileLayout from './MobileLayout'
 
 const PUBLIC_PREFIXES = ['/login', '/signup', '/accept-invite', '/public']
+const NO_LAYOUT_PREFIXES = ['/onboarding']
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+}
+
+function isNoLayoutPath(pathname: string) {
+  return NO_LAYOUT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
 }
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
@@ -16,6 +21,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const isPublic = isPublicPath(pathname)
+  const isNoLayout = isNoLayoutPath(pathname)
 
   useEffect(() => {
     if (loading) return
@@ -39,6 +45,10 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         />
       </div>
     )
+  }
+
+  if (isNoLayout) {
+    return <>{children}</>
   }
 
   return <MobileLayout>{children}</MobileLayout>
