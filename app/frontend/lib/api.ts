@@ -8,15 +8,32 @@ async function getAuthHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+const REQUEST_TIMEOUT_MS = 30000
+
 export async function apiFetch(path: string, options?: RequestInit) {
   const authHeader = await getAuthHeader()
-  const res = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      ...authHeader,
-      ...(options?.headers ?? {}),
-    },
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+
+  let res: Response
+  try {
+    res = await fetch(`${API}${path}`, {
+      ...options,
+      headers: {
+        ...authHeader,
+        ...(options?.headers ?? {}),
+      },
+      signal: controller.signal,
+    })
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('La solicitud tardó demasiado. El servidor puede estar ocupado, intentá de nuevo en un momento.')
+    }
+    throw err
+  } finally {
+    clearTimeout(timeout)
+  }
+
   if (!res.ok) {
     const text = await res.text()
     if (
