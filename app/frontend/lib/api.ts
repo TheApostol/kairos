@@ -8,7 +8,7 @@ async function getAuthHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-const REQUEST_TIMEOUT_MS = 30000
+const REQUEST_TIMEOUT_MS = 60000
 
 export async function apiFetch(path: string, options?: RequestInit) {
   const authHeader = await getAuthHeader()
