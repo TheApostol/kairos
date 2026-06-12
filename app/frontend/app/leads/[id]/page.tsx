@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { getLead, updateLead, createLeadNote, getOrders, getLeadTasks, createLeadTask, updateLeadTask, getPriceListUrl } from '@/lib/api'
+import { getLead, updateLead, createLeadNote, getOrders, getLeadTasks, createLeadTask, updateLeadTask, downloadFile } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -245,15 +245,7 @@ export default function LeadDetailPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              const url = getPriceListUrl(lead.id)
-              const a = document.createElement('a')
-              a.href = url
-              a.download = ''
-              document.body.appendChild(a)
-              a.click()
-              document.body.removeChild(a)
-            }}
+            onClick={() => downloadFile(`/products/price-list/${lead.id}`, `lista_precios_${lead.empresa || lead.id}.pdf`)}
           >
             <FileDown className="w-4 h-4 mr-2" />
             Lista de Precios

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, getApiUrl } from '@/lib/api'
+import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, getEventSourceUrl } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -160,7 +160,7 @@ export default function ScraperPage() {
       const res = await runScraper()
       if (res?.job_id) setScraperJobId(String(res.job_id))
 
-      const es = new EventSource(getApiUrl('/scraper/progress'))
+      const es = new EventSource(await getEventSourceUrl('/scraper/progress'))
       eventSourceRef.current = es
 
       es.onmessage = (event) => {

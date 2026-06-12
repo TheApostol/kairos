@@ -58,7 +58,10 @@ export default function PublicCatalogPage() {
     const tipo = params.get('tipo')
     setIsMayorista(tipo === 'mayorista')
 
-    fetch(`${API_URL}/products?activo=true`)
+    const org = params.get('org')
+    const url = org ? `${API_URL}/public/catalog?org=${encodeURIComponent(org)}` : `${API_URL}/public/catalog`
+
+    fetch(url)
       .then((r) => r.json())
       .then((data) => setProducts(data.items ?? data ?? []))
       .catch(() => {})

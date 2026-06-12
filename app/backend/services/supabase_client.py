@@ -5,10 +5,11 @@ from config import settings
 
 class SupabaseClient:
     def __init__(self):
+        key = settings.SUPABASE_SERVICE_KEY or settings.SUPABASE_KEY
         self.base_url = settings.SUPABASE_URL.rstrip("/")
         self.headers = {
-            "apikey": settings.SUPABASE_KEY,
-            "Authorization": f"Bearer {settings.SUPABASE_KEY}",
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             "Prefer": "return=representation",
         }
@@ -67,8 +68,8 @@ class SupabaseClient:
                 return result[0]
             return result
 
-    def update(self, table: str, id: Any, data: dict) -> dict:
-        params = {"id": f"eq.{id}"}
+    def update(self, table: str, id: Any, data: dict, extra_filters: Optional[dict] = None) -> dict:
+        params = {"id": f"eq.{id}", **(extra_filters or {})}
         update_headers = {**self.headers, "Prefer": "return=minimal"}
         with httpx.Client(timeout=30) as client:
             resp = client.patch(
@@ -81,8 +82,8 @@ class SupabaseClient:
                 raise Exception(f"Supabase PATCH error {resp.status_code}: {resp.text}")
             return {}
 
-    def delete(self, table: str, id: Any) -> None:
-        params = {"id": f"eq.{id}"}
+    def delete(self, table: str, id: Any, extra_filters: Optional[dict] = None) -> None:
+        params = {"id": f"eq.{id}", **(extra_filters or {})}
         with httpx.Client(timeout=30) as client:
             resp = client.delete(
                 self._rest_url(table),
@@ -155,6 +156,58 @@ class SupabaseClient:
             )
             resp.raise_for_status()
             return resp.json()
+
+
+class ScopedSupabaseClient:
+    """Wraps SupabaseClient and transparently scopes every operation to a
+    single organization_id, so the service-role `db` client (which bypasses
+    RLS) cannot accidentally read or write another tenant's rows."""
+
+    def __init__(self, base: SupabaseClient, organization_id: str):
+        self._base = base
+        self.organization_id = organization_id
+
+    def _scoped_filters(self, filters: Optional[dict]) -> dict:
+        merged = dict(filters or {})
+        merged["organization_id"] = f"eq.{self.organization_id}"
+        return merged
+
+    def select(
+        self,
+        table: str,
+        filters: Optional[dict] = None,
+        order: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        select_cols: str = "*",
+    ) -> list:
+        return self._base.select(
+            table,
+            filters=self._scoped_filters(filters),
+            order=order,
+            limit=limit,
+            offset=offset,
+            select_cols=select_cols,
+        )
+
+    def select_all(self, table: str, filters: Optional[dict] = None, select_cols: str = "*", batch: int = 1000) -> list:
+        return self._base.select_all(table, filters=self._scoped_filters(filters), select_cols=select_cols, batch=batch)
+
+    def raw_select(self, table: str, params: dict) -> list:
+        return self._base.raw_select(table, self._scoped_filters(params))
+
+    def count(self, table: str, filters: Optional[dict] = None) -> int:
+        return self._base.count(table, self._scoped_filters(filters))
+
+    def insert(self, table: str, data: dict) -> dict:
+        data = {**data, "organization_id": self.organization_id}
+        return self._base.insert(table, data)
+
+    def update(self, table: str, id: Any, data: dict) -> dict:
+        return self._base.update(table, id, data, extra_filters={"organization_id": f"eq.{self.organization_id}"})
+
+    def delete(self, table: str, id: Any) -> None:
+        self._base.delete(table, id, extra_filters={"organization_id": f"eq.{self.organization_id}"})
 
 
 db = SupabaseClient()

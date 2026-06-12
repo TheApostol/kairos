@@ -1,13 +1,59 @@
+import { supabase } from './supabaseClient'
+
 const API = process.env.NEXT_PUBLIC_API_URL || 'https://kairos-anuu.onrender.com'
 
+async function getAuthHeader(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 export async function apiFetch(path: string, options?: RequestInit) {
-  const res = await fetch(`${API}${path}`, options)
+  const authHeader = await getAuthHeader()
+  const res = await fetch(`${API}${path}`, {
+    ...options,
+    headers: {
+      ...authHeader,
+      ...(options?.headers ?? {}),
+    },
+  })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export function getApiUrl(path: string) {
   return `${API}${path}`
+}
+
+/**
+ * Fetches a file from the API with the auth header attached, then triggers a
+ * browser download. Use this instead of `<a href>`/`window.open` for endpoints
+ * that require authentication (invoices, exports, price lists, etc).
+ */
+export async function downloadFile(path: string, filename: string) {
+  const authHeader = await getAuthHeader()
+  const res = await fetch(`${API}${path}`, { headers: authHeader })
+  if (!res.ok) throw new Error(await res.text())
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * Builds a URL for an SSE (EventSource) connection, appending the current
+ * access token as a query param since EventSource cannot set custom headers.
+ */
+export async function getEventSourceUrl(path: string) {
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
+  const separator = path.includes('?') ? '&' : '?'
+  return `${API}${path}${token ? `${separator}token=${encodeURIComponent(token)}` : ''}`
 }
 
 // Leads
@@ -165,10 +211,6 @@ export async function getOrderStats() {
   return apiFetch('/orders/stats')
 }
 
-export function getOrderInvoiceUrl(id: string | number) {
-  return getApiUrl(`/orders/${id}/invoice`)
-}
-
 // Products / Catalog
 export async function getProducts(params?: Record<string, string>) {
   const query = params ? '?' + new URLSearchParams(params).toString() : ''
@@ -221,10 +263,6 @@ export async function syncFromGoogleSheet(sheetId: string) {
   })
 }
 
-export function getProductsCsvUrl() {
-  return getApiUrl('/products/export-csv')
-}
-
 // Scraper
 export async function getScraperHistory() {
   return apiFetch('/scraper/history')
@@ -258,8 +296,53 @@ export async function getLowStock(threshold: number = 5) {
   return apiFetch(`/products/low-stock?threshold=${threshold}`)
 }
 
-export function getPriceListUrl(leadId: string | number) {
-  return getApiUrl(`/products/price-list/${leadId}`)
+// Organizations
+export async function getMyOrganization() {
+  return apiFetch('/organizations/me')
+}
+
+export async function createOrganization(data: { name: string; slug: string }) {
+  return apiFetch('/organizations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function acceptInvitation(token: string) {
+  return apiFetch('/organizations/accept-invitation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+}
+
+export async function getInvitations() {
+  return apiFetch('/organizations/invitations')
+}
+
+export async function createInvitation(data: { email: string; role?: string }) {
+  return apiFetch('/organizations/invitations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function revokeInvitation(invitationId: string | number) {
+  return apiFetch(`/organizations/invitations/${invitationId}`, { method: 'DELETE' })
+}
+
+export async function updateMember(userId: string, data: { role?: string; status?: string }) {
+  return apiFetch(`/organizations/members/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function removeMember(userId: string) {
+  return apiFetch(`/organizations/members/${userId}`, { method: 'DELETE' })
 }
 
 export const API_BASE = API

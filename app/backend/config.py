@@ -4,6 +4,13 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # Supabase
     SUPABASE_URL: str = ""
+    # service_role secret key. Required: with RLS enabled, the backend uses
+    # this key to bypass RLS and enforces per-organization scoping itself.
+    SUPABASE_SERVICE_KEY: str = ""
+    # anon/publishable key. Used to verify user access tokens against the
+    # Supabase Auth API (GoTrue).
+    SUPABASE_ANON_KEY: str = ""
+    # Deprecated: kept as a fallback for SUPABASE_SERVICE_KEY if it is not set.
     SUPABASE_KEY: str = ""
 
     # Third-party services

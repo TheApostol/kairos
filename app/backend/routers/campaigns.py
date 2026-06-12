@@ -3,10 +3,11 @@ import re
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
-from services.supabase_client import db
+from services.auth import OrgContext, get_current_org
+from services.supabase_client import db, ScopedSupabaseClient
 from config import settings
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
@@ -77,8 +78,10 @@ def _send_email_brevo(to_email: str, to_name: str, subject: str, html_body: str,
 # BACKGROUND TASK
 # ─────────────────────────────────────────────
 
-def _execute_campaign(campaign_id: str):
-    campaigns = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+def _execute_campaign(campaign_id: str, org_id: str):
+    scoped_db = ScopedSupabaseClient(db, org_id)
+
+    campaigns = scoped_db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
     if not campaigns:
         return
 
@@ -98,11 +101,11 @@ def _execute_campaign(campaign_id: str):
     if campaign.get("tipo") == "email":
         params["email"] = "neq."
 
-    leads = db.raw_select("leads", params)
+    leads = scoped_db.raw_select("leads", params)
     total = len(leads)
 
     # Update campaign with total
-    db.update("campaigns", campaign_id, {
+    scoped_db.update("campaigns", campaign_id, {
         "estado": "enviando",
         "total_leads": total,
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -147,9 +150,9 @@ def _execute_campaign(campaign_id: str):
             send_record["enviado_at"] = datetime.now(timezone.utc).isoformat()
             enviados += 1
 
-        db.insert("campaign_sends", send_record)
+        scoped_db.insert("campaign_sends", send_record)
 
-    db.update("campaigns", campaign_id, {
+    scoped_db.update("campaigns", campaign_id, {
         "estado": "completada",
         "enviados": enviados,
         "fecha_envio": datetime.now(timezone.utc).isoformat(),
@@ -188,12 +191,12 @@ def _run_quick_email(leads: list, asunto: str, cuerpo: str):
 # ─────────────────────────────────────────────
 
 @router.post("/quick-send")
-def quick_send_leads(body: QuickSendRequest, background_tasks: BackgroundTasks):
+def quick_send_leads(body: QuickSendRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
     if not body.lead_ids:
         raise HTTPException(status_code=400, detail="No lead_ids provided")
 
     ids_str = ",".join(str(i) for i in body.lead_ids)
-    leads = db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(body.lead_ids)})
+    leads = current_org.db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(body.lead_ids)})
 
     if body.tipo == "whatsapp":
         links = []
@@ -227,9 +230,9 @@ def quick_send_leads(body: QuickSendRequest, background_tasks: BackgroundTasks):
 
 
 @router.post("/send-catalogue")
-def send_catalogue_to_clients(background_tasks: BackgroundTasks):
+def send_catalogue_to_clients(background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
     params = {"select": "*", "email": "neq.", "estado": "in.(cliente,interesado)", "limit": 1000}
-    leads = db.raw_select("leads", params)
+    leads = current_org.db.raw_select("leads", params)
 
     catalogue_url = f"{settings.BACKEND_URL}/products/export-catalog"
     asunto = "Catálogo de productos actualizado — Kairos"
@@ -245,11 +248,11 @@ def send_catalogue_to_clients(background_tasks: BackgroundTasks):
 
 
 @router.post("/followup-whatsapp")
-def get_followup_whatsapp_links(dias_sin_respuesta: int = 3):
+def get_followup_whatsapp_links(dias_sin_respuesta: int = 3, current_org: OrgContext = Depends(get_current_org)):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=dias_sin_respuesta)).isoformat()
 
     # Find leads that received an email but haven't responded and the send was at least N days ago
-    sent = db.raw_select("campaign_sends", {
+    sent = current_org.db.raw_select("campaign_sends", {
         "select": "lead_id,enviado_at,estado",
         "estado": "eq.enviado",
         "enviado_at": f"lte.{cutoff}",
@@ -262,7 +265,7 @@ def get_followup_whatsapp_links(dias_sin_respuesta: int = 3):
         return {"links": [], "total": 0, "message": "No hay leads para hacer seguimiento"}
 
     ids_str = ",".join(str(i) for i in lead_ids[:200])
-    leads = db.raw_select("leads", {
+    leads = current_org.db.raw_select("leads", {
         "select": "*",
         "id": f"in.({ids_str})",
         "limit": 200,
@@ -293,8 +296,8 @@ def get_followup_whatsapp_links(dias_sin_respuesta: int = 3):
 
 
 @router.post("/{campaign_id}/duplicate")
-def duplicate_campaign(campaign_id: str):
-    campaigns = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+def duplicate_campaign(campaign_id: str, current_org: OrgContext = Depends(get_current_org)):
+    campaigns = current_org.db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
     if not campaigns:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
@@ -317,13 +320,13 @@ def duplicate_campaign(campaign_id: str):
         "created_at": now,
         "updated_at": now,
     }
-    new_campaign = db.insert("campaigns", new_data)
+    new_campaign = current_org.db.insert("campaigns", new_data)
     return new_campaign
 
 
 @router.get("/stats")
-def get_campaigns_stats():
-    campaigns = db.select("campaigns", limit=1000)
+def get_campaigns_stats(current_org: OrgContext = Depends(get_current_org)):
+    campaigns = current_org.db.select("campaigns", limit=1000)
     total = len(campaigns)
     emails_enviados = sum(int(c.get("enviados") or 0) for c in campaigns)
     all_abiertos = [c for c in campaigns if (c.get("enviados") or 0) > 0]
@@ -341,13 +344,13 @@ def get_campaigns_stats():
 
 
 @router.get("")
-def list_campaigns():
-    campaigns = db.select("campaigns", order="created_at.desc", limit=100)
+def list_campaigns(current_org: OrgContext = Depends(get_current_org)):
+    campaigns = current_org.db.select("campaigns", order="created_at.desc", limit=100)
     return {"items": campaigns, "total": len(campaigns)}
 
 
 @router.post("")
-def create_campaign(body: CampaignCreate):
+def create_campaign(body: CampaignCreate, current_org: OrgContext = Depends(get_current_org)):
     data = {
         "nombre": body.nombre,
         "tipo": body.tipo,
@@ -365,19 +368,19 @@ def create_campaign(body: CampaignCreate):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    campaign = db.insert("campaigns", data)
+    campaign = current_org.db.insert("campaigns", data)
     return campaign
 
 
 @router.get("/{campaign_id}")
-def get_campaign(campaign_id: str):
-    campaigns = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+def get_campaign(campaign_id: str, current_org: OrgContext = Depends(get_current_org)):
+    campaigns = current_org.db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
     if not campaigns:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     campaign = campaigns[0]
 
-    sends = db.select(
+    sends = current_org.db.select(
         "campaign_sends",
         filters={"campaign_id": f"eq.{campaign_id}"},
         order="created_at.desc",
@@ -388,8 +391,8 @@ def get_campaign(campaign_id: str):
 
 
 @router.post("/{campaign_id}/send")
-def send_campaign(campaign_id: str, background_tasks: BackgroundTasks):
-    campaigns = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+def send_campaign(campaign_id: str, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
+    campaigns = current_org.db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
     if not campaigns:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
@@ -397,9 +400,9 @@ def send_campaign(campaign_id: str, background_tasks: BackgroundTasks):
     if campaign.get("estado") == "completada":
         raise HTTPException(status_code=400, detail="Campaign already sent")
 
-    background_tasks.add_task(_execute_campaign, campaign_id)
+    background_tasks.add_task(_execute_campaign, campaign_id, current_org.organization_id)
 
-    db.update("campaigns", campaign_id, {
+    current_org.db.update("campaigns", campaign_id, {
         "estado": "programada",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -408,14 +411,14 @@ def send_campaign(campaign_id: str, background_tasks: BackgroundTasks):
 
 
 @router.get("/{campaign_id}/analytics")
-def get_campaign_analytics(campaign_id: str):
-    campaigns = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+def get_campaign_analytics(campaign_id: str, current_org: OrgContext = Depends(get_current_org)):
+    campaigns = current_org.db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
     if not campaigns:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     campaign = campaigns[0]
 
-    sends = db.raw_select("campaign_sends", {
+    sends = current_org.db.raw_select("campaign_sends", {
         "select": "*",
         "campaign_id": f"eq.{campaign_id}",
         "limit": 5000,
@@ -458,7 +461,7 @@ def get_campaign_analytics(campaign_id: str):
 
 
 @router.post("/generate-text")
-def generate_campaign_text(body: GenerateTextRequest):
+def generate_campaign_text(body: GenerateTextRequest, current_org: OrgContext = Depends(get_current_org)):
     if not settings.ANTHROPIC_API_KEY:
         raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY not configured")
 

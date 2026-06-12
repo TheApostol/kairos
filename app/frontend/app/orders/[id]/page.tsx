@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { getOrder, updateOrder, getProducts, getOrderInvoiceUrl } from '@/lib/api'
+import { getOrder, updateOrder, getProducts, downloadFile } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -214,17 +214,10 @@ export default function OrderDetailPage() {
             onClick={async () => {
               setDownloadingInvoice(true)
               try {
-                const res = await fetch(getOrderInvoiceUrl(id))
-                if (!res.ok) throw new Error(await res.text())
-                const blob = await res.blob()
-                const url = URL.createObjectURL(blob)
-                const a = document.createElement('a')
-                a.href = url
-                a.download = `factura_${order.numero}_${new Date().toISOString().slice(0,10)}.pdf`
-                document.body.appendChild(a)
-                a.click()
-                document.body.removeChild(a)
-                URL.revokeObjectURL(url)
+                await downloadFile(
+                  `/orders/${id}/invoice`,
+                  `factura_${order.numero}_${new Date().toISOString().slice(0,10)}.pdf`
+                )
               } catch (e) {
                 alert(e instanceof Error ? e.message : 'Error al generar la factura')
               } finally {

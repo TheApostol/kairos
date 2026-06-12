@@ -5,11 +5,12 @@ import time
 import json
 from datetime import datetime, timezone
 from typing import Optional, List
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from services.supabase_client import db
+from services.auth import OrgContext, get_current_org
+from services.supabase_client import db, ScopedSupabaseClient
 from config import settings
 
 router = APIRouter(prefix="/scraper", tags=["scraper"])
@@ -654,13 +655,14 @@ def _discover_website(empresa: str, ciudad: str, api_key: str) -> str:
 # BACKGROUND TASKS
 # ─────────────────────────────────────────────
 
-def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_query: int, tipo_cliente: str = "lead"):
+def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_query: int, tipo_cliente: str = "lead", org_id: str = None):
+    scoped_db = ScopedSupabaseClient(db, org_id)
     seen_ids: set = set()
     results = []
     total_queries = len(queries)
 
     try:
-        db.update("scraper_jobs", job_id, {
+        scoped_db.update("scraper_jobs", job_id, {
             "status": "running",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "total": total_queries,
@@ -727,7 +729,7 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                         record["score_ia"] = _score_lead(record)
 
                         try:
-                            existing = db.select(
+                            existing = scoped_db.select(
                                 "leads",
                                 filters={
                                     "empresa": f"eq.{record['empresa']}",
@@ -736,7 +738,7 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
                                 limit=1,
                             )
                             if not existing:
-                                db.insert("leads", record)
+                                scoped_db.insert("leads", record)
                                 results.append(record)
                         except Exception:
                             results.append(record)
@@ -752,13 +754,13 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
             time.sleep(0.5)
 
             progress = int(((i + 1) / total_queries) * 100)
-            db.update("scraper_jobs", job_id, {
+            scoped_db.update("scraper_jobs", job_id, {
                 "progress": progress,
                 "new_found": len(results),
                 "total_found": len(seen_ids),
             })
 
-        db.update("scraper_jobs", job_id, {
+        scoped_db.update("scraper_jobs", job_id, {
             "status": "completed",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "progress": 100,
@@ -767,25 +769,26 @@ def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_quer
         })
 
     except Exception as exc:
-        db.update("scraper_jobs", job_id, {
+        scoped_db.update("scraper_jobs", job_id, {
             "status": "failed",
             "error_msg": str(exc),
             "completed_at": datetime.now(timezone.utc).isoformat(),
         })
 
 
-def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
+def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str = None):
+    scoped_db = ScopedSupabaseClient(db, org_id)
     try:
-        db.update("scraper_jobs", job_id, {
+        scoped_db.update("scraper_jobs", job_id, {
             "status": "running",
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
         if lead_ids:
             ids_str = ",".join(lead_ids)
-            all_leads = db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
+            all_leads = scoped_db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
         else:
-            all_leads = db.raw_select("leads", {
+            all_leads = scoped_db.raw_select("leads", {
                 "select": "id,empresa,website,email,telefono,instagram,whatsapp",
                 "website": "neq.",
                 "or": "(email.is.null,email.eq.)",
@@ -796,7 +799,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
         total = len(all_leads)
         enriched_count = 0
 
-        db.update("scraper_jobs", job_id, {"total": total})
+        scoped_db.update("scraper_jobs", job_id, {"total": total})
 
         google_api_key = settings.GOOGLE_API_KEY or ""
 
@@ -811,7 +814,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                     google_api_key,
                 )
                 if website:
-                    db.update("leads", lead["id"], {"website": website})
+                    scoped_db.update("leads", lead["id"], {"website": website})
 
             if not website:
                 continue
@@ -827,7 +830,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
                 merged = {**lead, **update_data}
                 update_data["score_ia"] = _score_lead(merged)
                 update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-                db.update("leads", lead["id"], update_data)
+                scoped_db.update("leads", lead["id"], update_data)
                 enriched_count += 1
 
             del enrich, update_data
@@ -838,7 +841,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
 
             time.sleep(0.3)
             progress = int(((i + 1) / max(total, 1)) * 100)
-            db.update("scraper_jobs", job_id, {
+            scoped_db.update("scraper_jobs", job_id, {
                 "progress": progress,
                 "new_found": enriched_count,
             })
@@ -846,7 +849,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
         del all_leads
         gc.collect()
 
-        db.update("scraper_jobs", job_id, {
+        scoped_db.update("scraper_jobs", job_id, {
             "status": "completed",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "progress": 100,
@@ -855,7 +858,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
         })
 
     except Exception as exc:
-        db.update("scraper_jobs", job_id, {
+        scoped_db.update("scraper_jobs", job_id, {
             "status": "failed",
             "error_msg": str(exc),
             "completed_at": datetime.now(timezone.utc).isoformat(),
@@ -867,7 +870,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]]):
 # ─────────────────────────────────────────────
 
 @router.post("/start")
-def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
+def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
     api_key = body.google_api_key or settings.GOOGLE_API_KEY
     if not api_key:
         raise HTTPException(
@@ -876,11 +879,11 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
         )
 
     # Auto-fail any stuck jobs before checking for conflicts
-    stuck = db.raw_select("scraper_jobs", {"select": "id,status,started_at,created_at", "status": "in.(pending,running)", "limit": 10})
-    _auto_fail_stuck_jobs(stuck)
+    stuck = current_org.db.raw_select("scraper_jobs", {"select": "id,status,started_at,created_at", "status": "in.(pending,running)", "limit": 10})
+    _auto_fail_stuck_jobs(stuck, current_org.db)
 
     # Prevent duplicate concurrent jobs
-    active = db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
+    active = current_org.db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
     if active:
         raise HTTPException(status_code=409, detail="Ya hay un job corriendo. Esperá a que termine antes de iniciar otro.")
 
@@ -892,7 +895,7 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
     else:
         queries = DEFAULT_QUERIES
 
-    job = db.insert("scraper_jobs", {
+    job = current_org.db.insert("scraper_jobs", {
         "status": "pending",
         "queries": queries,
         "progress": 0,
@@ -906,22 +909,31 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create scraper job")
 
-    background_tasks.add_task(_run_scraper_job, str(job_id), queries, api_key, body.max_per_query, tipo_cliente)
+    org_id = current_org.organization_id
+    background_tasks.add_task(_run_scraper_job, str(job_id), queries, api_key, body.max_per_query, tipo_cliente, org_id)
 
     return {"job_id": job_id, "status": "pending", "queries_count": len(queries), "tipo_cliente": tipo_cliente}
 
 
 @router.get("/jobs")
-def list_jobs():
-    jobs = db.select("scraper_jobs", order="created_at.desc", limit=20)
+def list_jobs(current_org: OrgContext = Depends(get_current_org)):
+    jobs = current_org.db.select("scraper_jobs", order="created_at.desc", limit=20)
+    jobs = _auto_fail_stuck_jobs(jobs, current_org.db)
     return {"data": jobs}
 
 
 @router.get("/stream/{job_id}")
-async def stream_job_progress(job_id: str):
+async def stream_job_progress(job_id: str, current_org: OrgContext = Depends(get_current_org)):
+    jobs = current_org.db.select("scraper_jobs", filters={"id": f"eq.{job_id}"}, limit=1)
+    if not jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    org_id = current_org.organization_id
+
     async def event_generator():
+        scoped_db = ScopedSupabaseClient(db, org_id)
         while True:
-            jobs = db.select("scraper_jobs", filters={"id": f"eq.{job_id}"}, limit=1)
+            jobs = scoped_db.select("scraper_jobs", filters={"id": f"eq.{job_id}"}, limit=1)
             if not jobs:
                 yield f"data: {json.dumps({'error': 'Job not found'})}\n\n"
                 return
@@ -947,15 +959,15 @@ async def stream_job_progress(job_id: str):
 
 
 @router.post("/run")
-def run_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks):
+def run_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
     """Alias for /start — used by the frontend."""
-    return start_scraper(body, background_tasks)
+    return start_scraper(body, background_tasks, current_org)
 
 
 STUCK_JOB_TIMEOUT_MINUTES = 180
 
 
-def _auto_fail_stuck_jobs(jobs: list) -> list:
+def _auto_fail_stuck_jobs(jobs: list, scoped_db) -> list:
     """Mark running/pending jobs older than STUCK_JOB_TIMEOUT_MINUTES as failed."""
     now = datetime.now(timezone.utc)
     for job in jobs:
@@ -970,7 +982,7 @@ def _auto_fail_stuck_jobs(jobs: list) -> list:
                 started = started.replace(tzinfo=timezone.utc)
             elapsed = (now - started).total_seconds() / 60
             if elapsed > STUCK_JOB_TIMEOUT_MINUTES:
-                db.update("scraper_jobs", job["id"], {
+                scoped_db.update("scraper_jobs", job["id"], {
                     "status": "failed",
                     "error_msg": f"Cancelado automáticamente (sin actividad por {int(elapsed)} min)",
                     "completed_at": now.isoformat(),
@@ -983,10 +995,10 @@ def _auto_fail_stuck_jobs(jobs: list) -> list:
 
 
 @router.get("/history")
-def get_history():
+def get_history(current_org: OrgContext = Depends(get_current_org)):
     """Frontend-compatible alias for /jobs with mapped field names."""
-    jobs = db.select("scraper_jobs", order="created_at.desc", limit=20)
-    jobs = _auto_fail_stuck_jobs(jobs)
+    jobs = current_org.db.select("scraper_jobs", order="created_at.desc", limit=20)
+    jobs = _auto_fail_stuck_jobs(jobs, current_org.db)
     status_map = {"completed": "completado", "failed": "error", "running": "corriendo", "pending": "pendiente"}
     items = [
         {
@@ -1007,15 +1019,15 @@ def get_history():
 
 
 @router.post("/jobs/{job_id}/cancel")
-def cancel_job(job_id: str):
+def cancel_job(job_id: str, current_org: OrgContext = Depends(get_current_org)):
     """Force-cancel a running or pending job."""
-    jobs = db.select("scraper_jobs", filters={"id": f"eq.{job_id}"}, limit=1)
+    jobs = current_org.db.select("scraper_jobs", filters={"id": f"eq.{job_id}"}, limit=1)
     if not jobs:
         raise HTTPException(status_code=404, detail="Job no encontrado")
     job = jobs[0]
     if job.get("status") not in ("running", "pending"):
         raise HTTPException(status_code=400, detail="El job ya terminó")
-    db.update("scraper_jobs", job_id, {
+    current_org.db.update("scraper_jobs", job_id, {
         "status": "failed",
         "error_msg": "Cancelado manualmente",
         "completed_at": datetime.now(timezone.utc).isoformat(),
@@ -1024,11 +1036,14 @@ def cancel_job(job_id: str):
 
 
 @router.get("/progress")
-async def stream_latest_progress():
+async def stream_latest_progress(current_org: OrgContext = Depends(get_current_org)):
     """SSE stream for the most recent job — used by the frontend."""
+    org_id = current_org.organization_id
+
     async def event_generator():
+        scoped_db = ScopedSupabaseClient(db, org_id)
         while True:
-            jobs = db.select("scraper_jobs", order="created_at.desc", limit=1)
+            jobs = scoped_db.select("scraper_jobs", order="created_at.desc", limit=1)
             if not jobs:
                 yield f"data: {json.dumps({'done': True, 'progress': 0})}\n\n"
                 return
@@ -1057,17 +1072,17 @@ async def stream_latest_progress():
 
 
 @router.post("/enrich")
-def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks):
+def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
     # Auto-fail stuck jobs before conflict check
-    stuck = db.raw_select("scraper_jobs", {"select": "id,status,started_at,created_at", "status": "in.(pending,running)", "limit": 10})
-    _auto_fail_stuck_jobs(stuck)
+    stuck = current_org.db.raw_select("scraper_jobs", {"select": "id,status,started_at,created_at", "status": "in.(pending,running)", "limit": 10})
+    _auto_fail_stuck_jobs(stuck, current_org.db)
 
     # Prevent duplicate concurrent jobs
-    active = db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
+    active = current_org.db.raw_select("scraper_jobs", {"select": "id,status", "status": "in.(pending,running)", "limit": 1})
     if active:
         raise HTTPException(status_code=409, detail="Ya hay un job corriendo. Esperá a que termine antes de iniciar otro.")
 
-    job = db.insert("scraper_jobs", {
+    job = current_org.db.insert("scraper_jobs", {
         "status": "pending",
         "queries": ["enrichment"],
         "progress": 0,
@@ -1080,6 +1095,7 @@ def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks):
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create enrichment job")
 
-    background_tasks.add_task(_run_enrichment_job, str(job_id), body.lead_ids)
+    org_id = current_org.organization_id
+    background_tasks.add_task(_run_enrichment_job, str(job_id), body.lead_ids, org_id)
 
     return {"job_id": job_id, "status": "pending"}
