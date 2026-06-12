@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
-import { getProducts, getProductCategories, createProduct, updateProduct, getProductPriceHistory, getApiUrl, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, getProductsCsvUrl } from '@/lib/api'
+import { getProducts, getProductCategories, createProduct, updateProduct, getProductPriceHistory, downloadFile, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -296,17 +296,10 @@ export default function CatalogPage() {
       Array.from(selectedForPdf).forEach((id) => params.append('product_ids', String(id)))
     }
     try {
-      const res = await fetch(`${getApiUrl('/products/export-catalog')}?${params.toString()}`)
-      if (!res.ok) throw new Error(await res.text())
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `catalogo_kairos_${new Date().toISOString().slice(0,10)}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      await downloadFile(
+        `/products/export-catalog?${params.toString()}`,
+        `catalogo_kairos_${new Date().toISOString().slice(0,10)}.pdf`
+      )
       setShowPdfDialog(false)
     } catch (e) {
       setPdfError(e instanceof Error ? e.message : 'Error al generar el PDF')
@@ -383,7 +376,7 @@ export default function CatalogPage() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => window.open(getProductsCsvUrl(), '_blank')}
+            onClick={() => downloadFile('/products/export-csv', `productos_kairos_${new Date().toISOString().slice(0,10)}.csv`)}
             className="gap-2"
           >
             <Sheet className="w-4 h-4" />

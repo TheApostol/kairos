@@ -4,11 +4,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from services.supabase_client import db
+from services.auth import OrgContext, get_current_org
+from services.supabase_client import db, ScopedSupabaseClient
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -455,8 +456,8 @@ def _build_price_list_pdf(products: list, lead: dict, es_mayorista: bool) -> byt
 # ─────────────────────────────────────────────
 
 @router.get("/categories")
-def get_categories():
-    products = db.select("products", filters={"activo": "eq.true"}, select_cols="categoria")
+def get_categories(current_org: OrgContext = Depends(get_current_org)):
+    products = current_org.db.select("products", filters={"activo": "eq.true"}, select_cols="categoria")
     cats = list({p.get("categoria") for p in products if p.get("categoria")})
     cats.sort()
     return {"categories": cats}
@@ -470,6 +471,7 @@ def list_products(
     q: Optional[str] = None,
     page: int = 1,
     per_page: int = 50,
+    current_org: OrgContext = Depends(get_current_org),
 ):
     params: dict = {
         "select": "*",
@@ -487,27 +489,27 @@ def list_products(
     if q:
         params["nombre"] = f"ilike.%{q}%"
 
-    products = db.raw_select("products", params)
-    total = db.count("products")
+    products = current_org.db.raw_select("products", params)
+    total = current_org.db.count("products")
     import math
     pages = max(1, math.ceil(total / per_page))
     return {"items": products, "total": total, "page": page, "pages": pages}
 
 
 @router.post("")
-def create_product(body: ProductCreate):
+def create_product(body: ProductCreate, current_org: OrgContext = Depends(get_current_org)):
     now = datetime.utcnow().isoformat()
     data = body.model_dump()
     data["created_at"] = now
     data["updated_at"] = now
-    product = db.insert("products", data)
+    product = current_org.db.insert("products", data)
     return product
 
 
 @router.put("/{product_id}")
 @router.patch("/{product_id}")
-def update_product(product_id: str, body: ProductUpdate):
-    existing = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
+def update_product(product_id: str, body: ProductUpdate, current_org: OrgContext = Depends(get_current_org)):
+    existing = current_org.db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
 
@@ -522,7 +524,7 @@ def update_product(product_id: str, body: ProductUpdate):
     )
     if price_changed:
         try:
-            db.insert("product_price_history", {
+            current_org.db.insert("product_price_history", {
                 "product_id": product_id,
                 "precio_minorista": update_data.get("precio_minorista", prev.get("precio_minorista")),
                 "precio_mayorista": update_data.get("precio_mayorista", prev.get("precio_mayorista")),
@@ -532,13 +534,13 @@ def update_product(product_id: str, body: ProductUpdate):
             pass
 
     update_data["updated_at"] = datetime.utcnow().isoformat()
-    updated = db.update("products", product_id, update_data)
+    updated = current_org.db.update("products", product_id, update_data)
     return updated
 
 
 @router.get("/{product_id}/price-history")
-def get_price_history(product_id: str, limit: int = 10):
-    history = db.raw_select("product_price_history", {
+def get_price_history(product_id: str, limit: int = 10, current_org: OrgContext = Depends(get_current_org)):
+    history = current_org.db.raw_select("product_price_history", {
         "select": "*",
         "product_id": f"eq.{product_id}",
         "order": "changed_at.desc",
@@ -548,12 +550,12 @@ def get_price_history(product_id: str, limit: int = 10):
 
 
 @router.delete("/{product_id}")
-def delete_product(product_id: str):
-    products = db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
+def delete_product(product_id: str, current_org: OrgContext = Depends(get_current_org)):
+    products = current_org.db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
     if not products:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    db.update("products", product_id, {
+    current_org.db.update("products", product_id, {
         "activo": False,
         "updated_at": datetime.utcnow().isoformat(),
     })
@@ -561,8 +563,8 @@ def delete_product(product_id: str):
 
 
 @router.get("/low-stock")
-def get_low_stock(threshold: int = 5):
-    products = db.select("products", filters={"activo": "eq.true"}, limit=5000)
+def get_low_stock(threshold: int = 5, current_org: OrgContext = Depends(get_current_org)):
+    products = current_org.db.select("products", filters={"activo": "eq.true"}, limit=5000)
     low = []
     for p in products:
         stock_val = p.get("stock")
@@ -577,13 +579,13 @@ def get_low_stock(threshold: int = 5):
 
 
 @router.get("/price-list/{lead_id}")
-def get_price_list(lead_id: str):
-    leads = db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
+def get_price_list(lead_id: str, current_org: OrgContext = Depends(get_current_org)):
+    leads = current_org.db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
     if not leads:
         raise HTTPException(status_code=404, detail="Lead not found")
     lead = leads[0]
 
-    products = db.select(
+    products = current_org.db.select(
         "products",
         filters={"activo": "eq.true"},
         order="categoria.asc,nombre.asc",
@@ -608,16 +610,17 @@ def export_catalog_get(
     title: str = Query(default="Catálogo de Productos"),
     product_ids: Optional[List[str]] = Query(default=None),
     incluir_precios: bool = Query(default=True),
+    current_org: OrgContext = Depends(get_current_org),
 ):
     if product_ids:
         ids_str = ",".join(product_ids)
-        products = db.raw_select("products", {
+        products = current_org.db.raw_select("products", {
             "select": "*",
             "id": f"in.({ids_str})",
             "activo": "eq.true",
         })
     else:
-        products = db.select_all(
+        products = current_org.db.select_all(
             "products",
             filters={"activo": "eq.true"},
         )
@@ -636,16 +639,16 @@ def export_catalog_get(
 
 
 @router.post("/export-catalog")
-def export_catalog(body: CatalogExportRequest):
+def export_catalog(body: CatalogExportRequest, current_org: OrgContext = Depends(get_current_org)):
     if body.product_ids:
         ids_str = ",".join(body.product_ids)
-        products = db.raw_select("products", {
+        products = current_org.db.raw_select("products", {
             "select": "*",
             "id": f"in.({ids_str})",
             "activo": "eq.true",
         })
     else:
-        products = db.select_all(
+        products = current_org.db.select_all(
             "products",
             filters={"activo": "eq.true"},
         )
@@ -658,7 +661,7 @@ def export_catalog(body: CatalogExportRequest):
     filename = f"catalogo_kairos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
 
     # Save export record
-    db.insert("catalog_exports", {
+    current_org.db.insert("catalog_exports", {
         "nombre": body.titulo,
         "tipo": "pdf",
         "productos": [p.get("id") for p in products],
@@ -829,8 +832,9 @@ def _kd_map_product(raw: dict, category: str) -> dict:
     }
 
 
-def _run_kairosdis_scraper() -> None:
+def _run_kairosdis_scraper(org_id: str) -> None:
     global _kairosdis_job
+    scoped_db = ScopedSupabaseClient(db, org_id)
     _kairosdis_job = {
         "status": "Iniciando...", "progress": 0, "total": 0,
         "new": 0, "updated": 0, "errors": [],
@@ -871,7 +875,7 @@ def _run_kairosdis_scraper() -> None:
         _kairosdis_job["status"] = f"Guardando {len(all_raw)} productos..."
 
         # Phase 3: upsert into products table
-        existing = db.select("products", select_cols="id,sku")
+        existing = scoped_db.select("products", select_cols="id,sku")
         existing_skus: dict = {p["sku"]: p["id"] for p in existing if p.get("sku")}
         now = datetime.utcnow().isoformat()
 
@@ -882,12 +886,12 @@ def _run_kairosdis_scraper() -> None:
                 sku = data.get("sku")
                 if sku and sku in existing_skus:
                     data["updated_at"] = now
-                    db.update("products", existing_skus[sku], data)
+                    scoped_db.update("products", existing_skus[sku], data)
                     _kairosdis_job["updated"] += 1
                 else:
                     data["created_at"] = now
                     data["updated_at"] = now
-                    inserted = db.insert("products", data)
+                    inserted = scoped_db.insert("products", data)
                     _kairosdis_job["new"] += 1
                     if sku and isinstance(inserted, dict) and inserted.get("id"):
                         existing_skus[sku] = inserted["id"]
@@ -903,15 +907,16 @@ def _run_kairosdis_scraper() -> None:
 
 
 @router.post("/scrape-kairosdis")
-def start_kairosdis_scraper(background_tasks: BackgroundTasks):
+def start_kairosdis_scraper(background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
     if _kairosdis_job.get("status") not in ("idle", "completed", "error"):
         raise HTTPException(status_code=409, detail="Scraper ya en ejecución")
-    background_tasks.add_task(_run_kairosdis_scraper)
+    org_id = current_org.organization_id
+    background_tasks.add_task(_run_kairosdis_scraper, org_id)
     return {"status": "started", "message": "Importando desde kairosdis.com.ar en segundo plano"}
 
 
 @router.get("/scrape-kairosdis/status")
-def kairosdis_scraper_status():
+def kairosdis_scraper_status(current_org: OrgContext = Depends(get_current_org)):
     return _kairosdis_job
 
 
@@ -927,10 +932,10 @@ _sheet_id_store: dict = {"id": ""}
 
 
 @router.get("/export-csv")
-def export_products_csv():
+def export_products_csv(current_org: OrgContext = Depends(get_current_org)):
     """Export all products as CSV for import into Google Sheets."""
     import csv as _csv
-    products = db.select_all("products", select_cols=",".join(SHEET_COLUMNS))
+    products = current_org.db.select_all("products", select_cols=",".join(SHEET_COLUMNS))
     output = io.StringIO()
     writer = _csv.writer(output)
     writer.writerow(["ID", "SKU", "Nombre", "Categoría", "Precio Minorista",
@@ -961,7 +966,7 @@ class SheetSyncRequest(BaseModel):
 
 
 @router.post("/sync-from-sheet")
-def sync_from_google_sheet(body: SheetSyncRequest):
+def sync_from_google_sheet(body: SheetSyncRequest, current_org: OrgContext = Depends(get_current_org)):
     """
     Read a Google Sheet (must be shared as 'Anyone with the link can view')
     and update prices, stock, and activo status in the CRM for matching SKUs.
@@ -1034,7 +1039,7 @@ def sync_from_google_sheet(body: SheetSyncRequest):
 
         update_data["updated_at"] = datetime.utcnow().isoformat()
         try:
-            db.update("products", product_id, update_data)
+            current_org.db.update("products", product_id, update_data)
             updated += 1
         except Exception as exc:
             errors.append(f"{product_id}: {exc}")

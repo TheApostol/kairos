@@ -13,11 +13,14 @@ import {
   BookOpen,
   Search,
   Building2,
+  UsersRound,
+  LogOut,
   X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { getLeads } from '@/lib/api'
 import { useScraperStatus } from '@/contexts/ScraperStatusContext'
+import { useAuth } from '@/contexts/AuthContext'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -28,6 +31,7 @@ const navItems = [
   { href: '/orders', label: 'Órdenes', icon: ShoppingCart },
   { href: '/catalog', label: 'Catálogo', icon: BookOpen },
   { href: '/scraper', label: 'Scraper', icon: Search },
+  { href: '/team', label: 'Equipo', icon: UsersRound },
 ]
 
 interface SidebarProps {
@@ -38,6 +42,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const pathname = usePathname()
   const [leadCount, setLeadCount] = useState<number | null>(null)
   const { isRunning: scraperRunning, progress: scraperProgress } = useScraperStatus()
+  const { user, signOut } = useAuth()
 
   useEffect(() => {
     getLeads({ limit: 1 })
@@ -141,12 +146,28 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
       {/* Footer */}
       <div
-        className="px-6 py-4 border-t"
+        className="px-6 py-4 border-t flex items-center justify-between gap-2"
         style={{ borderColor: '#3D2B1F' }}
       >
-        <p className="text-xs" style={{ color: '#6B4F3A' }}>
-          kairos.polkorp.com
-        </p>
+        <div className="min-w-0">
+          {user?.email && (
+            <p className="text-xs truncate" style={{ color: '#FAF7F2' }}>
+              {user.email}
+            </p>
+          )}
+          <p className="text-xs" style={{ color: '#6B4F3A' }}>
+            kairos.polkorp.com
+          </p>
+        </div>
+        <button
+          onClick={() => signOut()}
+          className="p-1.5 rounded-md flex-shrink-0"
+          style={{ color: '#FAF7F2' }}
+          aria-label="Cerrar sesión"
+          title="Cerrar sesión"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
     </aside>
   )

@@ -1,11 +1,11 @@
 import io
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from services.supabase_client import db
+from services.auth import OrgContext, get_current_org
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -199,8 +199,8 @@ def _calculate_order_totals(items: list, descuento: float = 0.0) -> dict:
 # ─────────────────────────────────────────────
 
 @router.get("/stats")
-def get_orders_stats():
-    orders = db.select("orders", limit=10000)
+def get_orders_stats(current_org: OrgContext = Depends(get_current_org)):
+    orders = current_org.db.select("orders", limit=10000)
 
     activos_estados = {"borrador", "confirmado", "en_preparacion", "despachado"}
     ordenes_activas = sum(1 for o in orders if o.get("estado") in activos_estados)
@@ -250,13 +250,13 @@ def get_orders_stats():
     top_lead_ids = sorted(lead_totals, key=lambda k: lead_totals[k], reverse=True)[:5]
     top_clientes = []
     for lid in top_lead_ids:
-        rows = db.select("leads", filters={"id": f"eq.{lid}"}, select_cols="id,empresa", limit=1)
+        rows = current_org.db.select("leads", filters={"id": f"eq.{lid}"}, select_cols="id,empresa", limit=1)
         empresa = rows[0].get("empresa", f"Lead #{lid}") if rows else f"Lead #{lid}"
         top_clientes.append({"lead_id": lid, "empresa": empresa, "total": round(lead_totals[lid], 2)})
 
     # Top products by revenue from order_items
     try:
-        all_items = db.select_all("order_items", select_cols="nombre,subtotal")
+        all_items = current_org.db.select_all("order_items", select_cols="nombre,subtotal")
         product_totals: dict = {}
         for item in all_items:
             nombre = item.get("nombre") or "Sin nombre"
@@ -285,11 +285,11 @@ def get_orders_stats():
 
 
 @router.get("/dormant-clients")
-def get_dormant_clients(dias: int = 30):
+def get_dormant_clients(dias: int = 30, current_org: OrgContext = Depends(get_current_org)):
     from datetime import timedelta
     cutoff = (datetime.utcnow() - timedelta(days=dias)).isoformat()
 
-    clientes = db.select(
+    clientes = current_org.db.select(
         "leads",
         filters={"estado": "eq.cliente"},
         select_cols="id,empresa,telefono,email,ciudad,provincia",
@@ -299,7 +299,7 @@ def get_dormant_clients(dias: int = 30):
     result = []
     for lead in clientes:
         lid = lead.get("id")
-        orders_recent = db.raw_select("orders", {
+        orders_recent = current_org.db.raw_select("orders", {
             "select": "id,created_at,total",
             "lead_id": f"eq.{lid}",
             "order": "created_at.desc",
@@ -335,6 +335,7 @@ def list_orders(
     fecha_to: Optional[str] = None,
     page: int = 1,
     per_page: int = 50,
+    current_org: OrgContext = Depends(get_current_org),
 ):
     params: dict = {
         "select": "*",
@@ -354,28 +355,28 @@ def list_orders(
     elif fecha_to:
         params["fecha_pedido"] = f"lte.{fecha_to}"
 
-    orders = db.raw_select("orders", params)
+    orders = current_org.db.raw_select("orders", params)
 
     # Enrich with empresa from leads
     lead_ids = list({o["lead_id"] for o in orders if o.get("lead_id")})
     empresa_map: dict = {}
     if lead_ids:
         for lid in lead_ids:
-            rows = db.select("leads", filters={"id": f"eq.{lid}"}, select_cols="id,empresa", limit=1)
+            rows = current_org.db.select("leads", filters={"id": f"eq.{lid}"}, select_cols="id,empresa", limit=1)
             if rows:
                 empresa_map[str(rows[0]["id"])] = rows[0].get("empresa")
     for o in orders:
         if o.get("lead_id"):
             o["empresa"] = empresa_map.get(str(o["lead_id"]))
 
-    total = db.count("orders")
+    total = current_org.db.count("orders")
     import math
     pages = max(1, math.ceil(total / per_page))
     return {"items": orders, "total": total, "page": page, "pages": pages}
 
 
 @router.post("")
-def create_order(body: OrderCreate):
+def create_order(body: OrderCreate, current_org: OrgContext = Depends(get_current_org)):
     numero = body.numero or _generate_order_number()
     now = datetime.utcnow().isoformat()
 
@@ -385,7 +386,7 @@ def create_order(body: OrderCreate):
         nombre = item.nombre
         precio_unit = item.precio_unit or 0.0
         if item.product_id:
-            prods = db.select("products", filters={"id": f"eq.{item.product_id}"}, limit=1)
+            prods = current_org.db.select("products", filters={"id": f"eq.{item.product_id}"}, limit=1)
             if prods:
                 p = prods[0]
                 nombre = nombre or p.get("nombre", "")
@@ -416,13 +417,13 @@ def create_order(body: OrderCreate):
         "updated_at": now,
     }
 
-    order = db.insert("orders", order_data)
+    order = current_org.db.insert("orders", order_data)
     order_id = order.get("id")
 
     created_items = []
     for item in items_data:
         item["order_id"] = order_id
-        created_item = db.insert("order_items", item)
+        created_item = current_org.db.insert("order_items", item)
         created_items.append(created_item)
 
     order["items"] = created_items
@@ -430,15 +431,15 @@ def create_order(body: OrderCreate):
 
 
 @router.get("/{order_id}/invoice")
-def get_order_invoice(order_id: str):
-    orders = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
+def get_order_invoice(order_id: str, current_org: OrgContext = Depends(get_current_org)):
+    orders = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if not orders:
         raise HTTPException(status_code=404, detail="Order not found")
     order = orders[0]
-    items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+    items = current_org.db.select("order_items", filters={"order_id": f"eq.{order_id}"})
     lead = {}
     if order.get("lead_id"):
-        leads = db.select("leads", filters={"id": f"eq.{order['lead_id']}"}, limit=1)
+        leads = current_org.db.select("leads", filters={"id": f"eq.{order['lead_id']}"}, limit=1)
         if leads:
             lead = {k: leads[0].get(k) for k in ["empresa", "email", "telefono", "ciudad", "provincia"]}
     pdf_bytes = _build_invoice_pdf(order, lead, items)
@@ -452,19 +453,19 @@ def get_order_invoice(order_id: str):
 
 
 @router.get("/{order_id}")
-def get_order(order_id: str):
-    orders = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
+def get_order(order_id: str, current_org: OrgContext = Depends(get_current_org)):
+    orders = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if not orders:
         raise HTTPException(status_code=404, detail="Order not found")
 
     order = orders[0]
 
-    items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+    items = current_org.db.select("order_items", filters={"order_id": f"eq.{order_id}"})
     order["items"] = items
 
     lead = None
     if order.get("lead_id"):
-        leads = db.select("leads", filters={"id": f"eq.{order['lead_id']}"}, limit=1)
+        leads = current_org.db.select("leads", filters={"id": f"eq.{order['lead_id']}"}, limit=1)
         if leads:
             lead = {
                 k: leads[0].get(k)
@@ -477,8 +478,8 @@ def get_order(order_id: str):
 
 @router.put("/{order_id}")
 @router.patch("/{order_id}")
-def update_order(order_id: str, body: OrderUpdate):
-    existing = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
+def update_order(order_id: str, body: OrderUpdate, current_org: OrgContext = Depends(get_current_org)):
+    existing = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
     order = existing[0]
@@ -488,22 +489,22 @@ def update_order(order_id: str, body: OrderUpdate):
 
     if update_data:
         update_data["updated_at"] = now
-        db.update("orders", order_id, update_data)
+        current_org.db.update("orders", order_id, update_data)
 
     # Replace items if provided
     if body.items is not None:
-        old_items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+        old_items = current_org.db.select("order_items", filters={"order_id": f"eq.{order_id}"})
         for old in old_items:
-            db.delete("order_items", old["id"])
+            current_org.db.delete("order_items", old["id"])
         for item in body.items:
             p_unit = item.precio_unit or 0.0
             nombre = item.nombre
             if item.product_id:
-                prods = db.select("products", filters={"id": f"eq.{item.product_id}"}, limit=1)
+                prods = current_org.db.select("products", filters={"id": f"eq.{item.product_id}"}, limit=1)
                 if prods:
                     nombre = nombre or prods[0].get("nombre", "")
                     p_unit = p_unit or float(prods[0].get("precio_mayorista") or prods[0].get("precio_minorista") or 0)
-            db.insert("order_items", {
+            current_org.db.insert("order_items", {
                 "order_id": order_id,
                 "product_id": str(item.product_id) if item.product_id else None,
                 "nombre": nombre or "Producto",
@@ -514,28 +515,28 @@ def update_order(order_id: str, body: OrderUpdate):
 
     # Recalculate totals whenever items or discount changed
     if body.items is not None or "descuento" in update_data:
-        all_items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+        all_items = current_org.db.select("order_items", filters={"order_id": f"eq.{order_id}"})
         descuento = update_data.get("descuento", float(order.get("descuento") or 0))
         totals = _calculate_order_totals(all_items, descuento)
-        db.update("orders", order_id, {
+        current_org.db.update("orders", order_id, {
             "subtotal": totals["subtotal"],
             "total": totals["total"],
             "updated_at": now,
         })
 
     # Return the full updated order
-    updated_order = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)[0]
-    updated_order["items"] = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+    updated_order = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)[0]
+    updated_order["items"] = current_org.db.select("order_items", filters={"order_id": f"eq.{order_id}"})
     if updated_order.get("lead_id"):
-        leads = db.select("leads", filters={"id": f"eq.{updated_order['lead_id']}"}, limit=1)
+        leads = current_org.db.select("leads", filters={"id": f"eq.{updated_order['lead_id']}"}, limit=1)
         if leads:
             updated_order["lead"] = {k: leads[0].get(k) for k in ["id", "empresa", "email", "telefono", "ciudad", "provincia"]}
     return updated_order
 
 
 @router.post("/{order_id}/items")
-def add_order_item(order_id: str, body: OrderItemCreate):
-    orders = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
+def add_order_item(order_id: str, body: OrderItemCreate, current_org: OrgContext = Depends(get_current_org)):
+    orders = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if not orders:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -549,14 +550,14 @@ def add_order_item(order_id: str, body: OrderItemCreate):
         "precio_unit": precio_unit,
         "subtotal": subtotal,
     }
-    new_item = db.insert("order_items", item_data)
+    new_item = current_org.db.insert("order_items", item_data)
 
     # Recalculate order totals
-    all_items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+    all_items = current_org.db.select("order_items", filters={"order_id": f"eq.{order_id}"})
     order = orders[0]
     descuento = float(order.get("descuento") or 0)
     totals = _calculate_order_totals(all_items, descuento)
-    db.update("orders", order_id, {
+    current_org.db.update("orders", order_id, {
         "subtotal": totals["subtotal"],
         "total": totals["total"],
         "updated_at": datetime.utcnow().isoformat(),
@@ -566,8 +567,8 @@ def add_order_item(order_id: str, body: OrderItemCreate):
 
 
 @router.delete("/{order_id}/items/{item_id}")
-def delete_order_item(order_id: str, item_id: str):
-    items = db.select(
+def delete_order_item(order_id: str, item_id: str, current_org: OrgContext = Depends(get_current_org)):
+    items = current_org.db.select(
         "order_items",
         filters={"id": f"eq.{item_id}", "order_id": f"eq.{order_id}"},
         limit=1,
@@ -575,15 +576,15 @@ def delete_order_item(order_id: str, item_id: str):
     if not items:
         raise HTTPException(status_code=404, detail="Order item not found")
 
-    db.delete("order_items", item_id)
+    current_org.db.delete("order_items", item_id)
 
-    orders = db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
+    orders = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if orders:
-        remaining_items = db.select("order_items", filters={"order_id": f"eq.{order_id}"})
+        remaining_items = current_org.db.select("order_items", filters={"order_id": f"eq.{order_id}"})
         order = orders[0]
         descuento = float(order.get("descuento") or 0)
         totals = _calculate_order_totals(remaining_items, descuento)
-        db.update("orders", order_id, {
+        current_org.db.update("orders", order_id, {
             "subtotal": totals["subtotal"],
             "total": totals["total"],
             "updated_at": datetime.utcnow().isoformat(),

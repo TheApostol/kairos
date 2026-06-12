@@ -31,7 +31,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { getLeads, getLeadStats, getLeadRubros, getApiUrl, updateLead, quickSendLeads, generateCampaignText } from '@/lib/api'
+import { getLeads, getLeadStats, getLeadRubros, apiFetch, downloadFile, updateLead, quickSendLeads, generateCampaignText } from '@/lib/api'
 import { Search, Download, ChevronLeft, ChevronRight, Loader2, Mail, MessageSquare, FileDown, Sparkles, Upload } from 'lucide-react'
 
 interface Lead {
@@ -234,7 +234,7 @@ export default function LeadsPage() {
     }
   }
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const params = new URLSearchParams()
     if (search) params.set('empresa', search)
     if (provincia && provincia !== 'all') params.set('provincia', provincia)
@@ -243,7 +243,7 @@ export default function LeadsPage() {
     if (soloEmail) params.set('con_email', 'true')
     if (soloTelefono) params.set('con_telefono', 'true')
     params.set('format', 'csv')
-    window.open(`${getApiUrl('/leads/export')}?${params.toString()}`, '_blank')
+    await downloadFile(`/leads/export?${params.toString()}`, `leads_kairos_${new Date().toISOString().slice(0,10)}.csv`)
   }
 
   const handleWaBroadcastExport = async () => {
@@ -286,9 +286,7 @@ export default function LeadsPage() {
     try {
       const formData = new FormData()
       formData.append('file', importFile)
-      const res = await fetch(`${getApiUrl('/leads/import')}`, { method: 'POST', body: formData })
-      if (!res.ok) throw new Error(await res.text())
-      const result = await res.json()
+      const result = await apiFetch('/leads/import', { method: 'POST', body: formData })
       setImportResult(result)
       fetchLeads()
     } catch {

@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
-import { getApiUrl } from '@/lib/api'
+import { apiFetch, getEventSourceUrl } from '@/lib/api'
 
 interface ScraperStatus {
   isRunning: boolean
@@ -42,9 +42,7 @@ export function ScraperStatusProvider({ children }: { children: React.ReactNode 
     keepaliveRef.current = setInterval(async () => {
       if (!mounted) return
       try {
-        const res = await fetch(getApiUrl('/scraper/history'))
-        if (!res.ok) return
-        const data = await res.json()
+        const data = await apiFetch('/scraper/history')
         const jobs: Array<{ estado: string; progress?: number; tipo?: string }> = data.items ?? []
         const running = jobs.find((j) => j.estado === 'corriendo' || j.estado === 'pendiente')
         if (running) {
@@ -58,11 +56,13 @@ export function ScraperStatusProvider({ children }: { children: React.ReactNode 
       } catch {}
     }, 30_000)
 
-    const connect = () => {
+    const connect = async () => {
       if (!mounted) return
       esRef.current?.close()
 
-      const es = new EventSource(getApiUrl('/scraper/progress'))
+      const url = await getEventSourceUrl('/scraper/progress')
+      if (!mounted) return
+      const es = new EventSource(url)
       esRef.current = es
 
       es.onmessage = (event) => {
