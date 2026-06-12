@@ -30,15 +30,8 @@ ALLOWED_RAW_DB_FILES = {
     "organizations.py",   # platform membership/invitation bootstrap; uses auth helpers + explicit filters
 }
 
-RAW_IMPORT_RE = re.compile(r"from\s+services\.supabase_client\s+import\s+([^\n]+)")
 RAW_DB_CALL_RE = re.compile(r"(?<![A-Za-z0-9_])db\.(select|select_all|raw_select|insert|update|delete|count)\(")
-
-
-def is_allowed_raw_import(imports: str) -> bool:
-    names = {part.strip().split(" as ")[0] for part in imports.split(",")}
-    # ScopedSupabaseClient import is valid for background jobs / SSE closures.
-    # Raw `db` import is only acceptable in whitelisted files.
-    return "db" not in names
+SCOPED_CLIENT_RE = re.compile(r"ScopedSupabaseClient\(\s*db\s*,")
 
 
 def audit_file(path: Path) -> list[str]:
@@ -46,20 +39,22 @@ def audit_file(path: Path) -> list[str]:
     rel = path.relative_to(ROOT)
     errors: list[str] = []
 
-    raw_import_match = RAW_IMPORT_RE.search(text)
-    if path.name not in ALLOWED_RAW_DB_FILES and raw_import_match:
-        imports = raw_import_match.group(1)
-        if not is_allowed_raw_import(imports):
-            errors.append(f"{rel}: imports raw `db`; tenant routers should use current_org.db or ScopedSupabaseClient")
+    if path.name in ALLOWED_RAW_DB_FILES:
+        return errors
 
-    if path.name not in ALLOWED_RAW_DB_FILES:
-        for match in RAW_DB_CALL_RE.finditer(text):
-            line_no = text[: match.start()].count("\n") + 1
-            line = text.splitlines()[line_no - 1].strip()
-            # Allow constructing ScopedSupabaseClient(db, org_id) for background tasks.
-            if "ScopedSupabaseClient(db" in line:
-                continue
-            errors.append(f"{rel}:{line_no}: raw tenant DB call: {line}")
+    for match in RAW_DB_CALL_RE.finditer(text):
+        line_no = text[: match.start()].count("\n") + 1
+        line = text.splitlines()[line_no - 1].strip()
+        errors.append(f"{rel}:{line_no}: raw tenant DB call: {line}")
+
+    # Importing raw `db` is acceptable only when it is used to build a scoped
+    # client for background jobs/SSE closures. Direct `db.*` calls are caught
+    # above.
+    if "from services.supabase_client import db" in text and not SCOPED_CLIENT_RE.search(text):
+        errors.append(
+            f"{rel}: imports raw `db` but does not construct ScopedSupabaseClient; "
+            "tenant routers should use current_org.db"
+        )
 
     return errors
 
