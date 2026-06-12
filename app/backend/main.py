@@ -39,9 +39,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# The production frontend is always allowed, even if ALLOWED_ORIGINS isn't
+# configured (or is misconfigured) on the host.
+_PROD_FRONTEND_ORIGIN = "https://kairos.polkorp.com"
+_configured_origins = {o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()}
+_configured_origins.add(_PROD_FRONTEND_ORIGIN)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()],
+    allow_origins=list(_configured_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
