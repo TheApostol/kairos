@@ -26,7 +26,9 @@ class Settings(BaseSettings):
 
     # Security
     # Comma-separated origins. Example: https://kairos.vercel.app,https://kairosdis.com.ar
-    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    # Includes the production frontend by default so CORS still works even if
+    # the ALLOWED_ORIGINS env var isn't configured on the host (e.g. Render).
+    ALLOWED_ORIGINS: str = "http://localhost:3000,https://kairos.polkorp.com"
     REQUIRE_AUTH: bool = True
 
     class Config:
