@@ -1,4 +1,4 @@
-// File: /home/user/kairos/app/frontend/app/pipeline/page.tsx
+// File: /home/runner/work/kairos/kairos/app/frontend/app/pipeline/page.tsx
 import * as entry from '../../../../app/pipeline/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
