@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, getEventSourceUrl } from '@/lib/api'
+import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, getEventSourceUrl, SCRAPER_SOURCES, DEFAULT_SCRAPER_SOURCES } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -29,6 +29,7 @@ interface ScraperJob {
   progress?: number
   total?: number
   tipo?: 'scraper' | 'enrichment'
+  sources?: string[]
 }
 
 type RunState = 'idle' | 'running' | 'done' | 'error'
@@ -86,6 +87,12 @@ export default function ScraperPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [cancellingId, setCancellingId] = useState<number | null>(null)
   const autoCombinedRef = useRef(false)
+
+  // Source selector — which free/paid lead sources to query
+  const [selectedSources, setSelectedSources] = useState<string[]>([...DEFAULT_SCRAPER_SOURCES])
+  const toggleSource = (id: string) => {
+    setSelectedSources((prev) => prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id])
+  }
 
   const cancelJob = async (jobId: number) => {
     setCancellingId(jobId)
@@ -157,7 +164,7 @@ export default function ScraperPage() {
     setLogLines(['Iniciando scraper...'])
 
     try {
-      const res = await runScraper()
+      const res = await runScraper({ sources: selectedSources })
       if (res?.job_id) setScraperJobId(String(res.job_id))
 
       const es = new EventSource(await getEventSourceUrl('/scraper/progress'))
@@ -294,7 +301,7 @@ export default function ScraperPage() {
               </div>
               <Button
                 onClick={startCombined}
-                disabled={anyJobRunning}
+                disabled={anyJobRunning || selectedSources.length === 0}
                 className="w-full gap-2 text-white"
                 style={{ backgroundColor: '#C9A040' }}
                 size="lg"
@@ -332,7 +339,7 @@ export default function ScraperPage() {
               )}
               <Button
                 onClick={startScraper}
-                disabled={anyJobRunning}
+                disabled={anyJobRunning || selectedSources.length === 0}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
                 size="lg"
               >
@@ -402,6 +409,47 @@ export default function ScraperPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Source Selector */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Fuentes de datos</CardTitle>
+          <p className="text-sm text-slate-500">Elegí qué fuentes consultar al ejecutar el scraper</p>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            {SCRAPER_SOURCES.map((source) => {
+              const checked = selectedSources.includes(source.id)
+              return (
+                <label
+                  key={source.id}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer transition-colors ${
+                    checked ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                  } ${anyJobRunning ? 'opacity-60 pointer-events-none' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-emerald-600"
+                    checked={checked}
+                    disabled={anyJobRunning}
+                    onChange={() => toggleSource(source.id)}
+                  />
+                  {source.label}
+                  {'requiresApiKey' in source && source.requiresApiKey && (
+                    <Badge variant="secondary" className="text-[10px]">requiere API key</Badge>
+                  )}
+                  {'experimental' in source && source.experimental && (
+                    <Badge variant="warning" className="text-[10px]">experimental</Badge>
+                  )}
+                </label>
+              )
+            })}
+          </div>
+          {selectedSources.length === 0 && (
+            <p className="text-xs text-red-600 mt-2">Elegí al menos una fuente para poder ejecutar el scraper.</p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Scraper Progress Panel */}
       {(isScraperRunning || scraperState === 'done' || scraperState === 'error') && logLines.length > 0 && (
@@ -536,6 +584,7 @@ export default function ScraperPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Tipo</TableHead>
+                    <TableHead>Fuentes</TableHead>
                     <TableHead>Inicio</TableHead>
                     <TableHead>Fin</TableHead>
                     <TableHead>Estado</TableHead>
@@ -552,6 +601,9 @@ export default function ScraperPage() {
                         <Badge variant={job.tipo === 'enrichment' ? 'secondary' : 'warning'} className="text-xs capitalize">
                           {job.tipo === 'enrichment' ? 'Enriquec.' : 'Scraper'}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-slate-600 text-xs max-w-[180px] truncate">
+                        {job.sources?.length ? job.sources.join(', ') : '—'}
                       </TableCell>
                       <TableCell className="text-slate-600 text-sm">{formatDate(job.started_at)}</TableCell>
                       <TableCell className="text-slate-600 text-sm">{formatDate(job.finished_at)}</TableCell>

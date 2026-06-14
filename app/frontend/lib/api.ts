@@ -292,15 +292,31 @@ export async function syncFromGoogleSheet(sheetId: string) {
 }
 
 // Scraper
+export const SCRAPER_SOURCES = [
+  { id: 'green_life', label: 'Green-Life (Tiendas Naturistas)' },
+  { id: 'overpass', label: 'OpenStreetMap (Overpass)' },
+  { id: 'datos_gob', label: 'Registro Nacional de Sociedades' },
+  { id: 'paginas_amarillas', label: 'Páginas Amarillas', experimental: true },
+  { id: 'google_places', label: 'Google Places', requiresApiKey: true },
+] as const
+
+export const DEFAULT_SCRAPER_SOURCES = ['green_life', 'overpass', 'datos_gob']
+
 export async function getScraperHistory() {
   return apiFetch('/scraper/history')
 }
 
-export async function runScraper(tipo_cliente: 'lead' | 'mayorista' = 'lead') {
+export async function runScraper(
+  options: { tipo_cliente?: 'lead' | 'mayorista'; sources?: string[] } | 'lead' | 'mayorista' = 'lead'
+) {
+  const body =
+    typeof options === 'string'
+      ? { tipo_cliente: options }
+      : { tipo_cliente: options.tipo_cliente ?? 'lead', sources: options.sources }
   return apiFetch('/scraper/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tipo_cliente }),
+    body: JSON.stringify(body),
   })
 }
 
