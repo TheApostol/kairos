@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -7,6 +8,8 @@ from services.auth import OrgContext, get_current_org, get_current_user, call_rp
 from services.supabase_client import db
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
+
+logger = logging.getLogger(__name__)
 
 
 VALID_INVITE_ROLES = {"admin", "sales", "viewer"}
@@ -55,13 +58,14 @@ def _admin_get_user_email(user_id: str) -> str:
 
 def _send_invitation_email(email: str, organization_name: str, role: str, token: str) -> None:
     if not settings.BREVO_API_KEY:
+        logger.warning("BREVO_API_KEY not configured; skipping invitation email to %s", email)
         return
     import httpx
 
     invite_url = f"{settings.FRONTEND_URL.rstrip('/')}/accept-invite?token={token}"
     try:
         with httpx.Client(timeout=15) as client:
-            client.post(
+            resp = client.post(
                 "https://api.brevo.com/v3/smtp/email",
                 headers={
                     "api-key": settings.BREVO_API_KEY,
@@ -79,8 +83,10 @@ def _send_invitation_email(email: str, organization_name: str, role: str, token:
                     "textContent": f"Te invitaron a unirte a {organization_name} como {role}. Aceptá aquí: {invite_url}",
                 },
             )
+        if resp.status_code >= 400:
+            logger.error("Brevo invitation email to %s failed: %s %s", email, resp.status_code, resp.text)
     except httpx.HTTPError:
-        pass
+        logger.exception("Brevo invitation email to %s failed", email)
 
 
 @router.get("/me")
