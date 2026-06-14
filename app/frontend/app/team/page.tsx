@@ -21,7 +21,7 @@ import {
   removeMember,
 } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
-import { Loader2, UserPlus, Trash2, Building2, LogOut } from 'lucide-react'
+import { Loader2, UserPlus, Trash2, Building2, LogOut, Copy, Check } from 'lucide-react'
 
 interface Member {
   user_id: string
@@ -35,6 +35,7 @@ interface Invitation {
   id: string
   email: string
   role: string
+  token?: string
   created_at?: string
 }
 
@@ -64,6 +65,7 @@ export default function TeamPage() {
   const [inviteRole, setInviteRole] = useState('sales')
   const [inviting, setInviting] = useState(false)
   const [inviteError, setInviteError] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const canManage = data?.role === 'owner' || data?.role === 'admin'
 
@@ -102,6 +104,14 @@ export default function TeamPage() {
     } finally {
       setInviting(false)
     }
+  }
+
+  const handleCopyInviteLink = async (inv: Invitation) => {
+    if (!inv.token) return
+    const url = `${window.location.origin}/accept-invite?token=${inv.token}`
+    await navigator.clipboard.writeText(url)
+    setCopiedId(inv.id)
+    setTimeout(() => setCopiedId((current) => (current === inv.id ? null : current)), 2000)
   }
 
   const handleRevoke = async (invitationId: string) => {
@@ -264,6 +274,9 @@ export default function TeamPage() {
             {invitations.length > 0 && (
               <div className="space-y-2 pt-2">
                 <p className="text-xs font-semibold uppercase" style={{ color: '#94A3B8' }}>Invitaciones pendientes</p>
+                <p className="text-xs" style={{ color: '#94A3B8' }}>
+                  Si la persona invitada no recibe el email, copiá el enlace y enviáselo manualmente.
+                </p>
                 {invitations.map((inv) => (
                   <div
                     key={inv.id}
@@ -274,9 +287,20 @@ export default function TeamPage() {
                       <p className="text-sm font-medium truncate" style={{ color: '#2D1F17' }}>{inv.email}</p>
                       <p className="text-xs" style={{ color: '#94A3B8' }}>{ROLE_LABELS[inv.role] ?? inv.role}</p>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => handleRevoke(inv.id)}>
-                      <Trash2 className="w-4 h-4" style={{ color: '#dc2626' }} />
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {inv.token && (
+                        <Button variant="outline" size="sm" onClick={() => handleCopyInviteLink(inv)} title="Copiar enlace de invitación">
+                          {copiedId === inv.id ? (
+                            <Check className="w-4 h-4 text-green-600" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" onClick={() => handleRevoke(inv.id)}>
+                        <Trash2 className="w-4 h-4" style={{ color: '#dc2626' }} />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

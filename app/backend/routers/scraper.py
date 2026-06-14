@@ -444,9 +444,14 @@ def _run_scraper_job(
                 kwargs.setdefault("queries", queries)
                 kwargs.setdefault("max_per_query", max_per_query)
 
+            base_progress = int(100 * source_index / num_sources)
+            next_progress = int(100 * (source_index + 1) / num_sources)
+            records_in_source = 0
+
             try:
                 for record in iter_fn(**kwargs):
                     total_found += 1
+                    records_in_source += 1
                     record["score_ia"] = _score_lead(record)
 
                     try:
@@ -465,7 +470,11 @@ def _run_scraper_job(
                         new_found += 1
 
                     if total_found % 10 == 0:
+                        progress = base_progress
+                        if next_progress > base_progress:
+                            progress = min(next_progress - 1, base_progress + records_in_source // 3)
                         scoped_db.update("scraper_jobs", job_id, {
+                            "progress": progress,
                             "new_found": new_found,
                             "total_found": total_found,
                         })

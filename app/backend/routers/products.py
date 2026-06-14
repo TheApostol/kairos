@@ -1,6 +1,7 @@
 import io
 import re
 import time
+from xml.sax.saxutils import escape as _xml_escape
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, List
@@ -61,6 +62,15 @@ class CatalogExportRequest(BaseModel):
 # ─────────────────────────────────────────────
 # PDF CATALOG GENERATOR
 # ─────────────────────────────────────────────
+
+def _pdf_text(value) -> str:
+    """Escape text for ReportLab Paragraph's XML-like markup.
+
+    Product names/descriptions/categories often contain '&', '<', '>' which
+    Paragraph's parser otherwise chokes on, breaking the whole PDF build.
+    """
+    return _xml_escape(str(value)) if value else ""
+
 
 def _load_pdf_image(imagen_url: str, width, height):
     """Load a product image for ReportLab. Supports base64 data URLs and http(s) URLs."""
@@ -192,7 +202,7 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
 
     # Header
     story.append(Spacer(1, 0.5 * cm))
-    story.append(Paragraph(titulo, title_style))
+    story.append(Paragraph(_pdf_text(titulo), title_style))
     story.append(Paragraph(
         f"Catálogo generado el {datetime.now().strftime('%d/%m/%Y')} · {len(products)} productos",
         subtitle_style,
@@ -212,7 +222,7 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
 
     for cat_name, cat_products in categories.items():
         # Category header row
-        cat_header_data = [[Paragraph(cat_name.upper(), section_header_style)]]
+        cat_header_data = [[Paragraph(_pdf_text(cat_name.upper()), section_header_style)]]
         cat_table = Table(cat_header_data, colWidths=[doc.width])
         cat_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
@@ -245,16 +255,16 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                     cell_content.append(Spacer(1, 0.2 * cm))
 
                 name_text = p.get("nombre", "Producto sin nombre")
-                cell_content.append(Paragraph(name_text, product_name_style))
+                cell_content.append(Paragraph(_pdf_text(name_text), product_name_style))
 
                 desc = p.get("descripcion") or ""
                 if desc:
                     short_desc = desc[:200] + ("..." if len(desc) > 200 else "")
-                    cell_content.append(Paragraph(short_desc, product_desc_style))
+                    cell_content.append(Paragraph(_pdf_text(short_desc), product_desc_style))
 
                 sku = p.get("sku")
                 if sku:
-                    cell_content.append(Paragraph(f"SKU: {sku}", sku_style))
+                    cell_content.append(Paragraph(f"SKU: {_pdf_text(sku)}", sku_style))
 
                 if incluir_precios:
                     def _fmt_price(val):
@@ -387,7 +397,7 @@ def _build_price_list_pdf(products: list, lead: dict, es_mayorista: bool) -> byt
     story = []
     story.append(Paragraph("LISTA DE PRECIOS", title_style))
     story.append(Spacer(1, 0.2 * cm))
-    story.append(Paragraph(empresa, emp_style))
+    story.append(Paragraph(_pdf_text(empresa), emp_style))
     story.append(Paragraph(f"Precio {tier_label} · {datetime.now().strftime('%d/%m/%Y')}", sub_style))
     story.append(Spacer(1, 0.3 * cm))
     story.append(HRFlowable(width="100%", thickness=2, color=ACCENT))
@@ -403,7 +413,7 @@ def _build_price_list_pdf(products: list, lead: dict, es_mayorista: bool) -> byt
     for cat_name in sorted(by_cat):
         cat_products = by_cat[cat_name]
         header_table = Table(
-            [[Paragraph(cat_name.upper(), col_header_style), ""]],
+            [[Paragraph(_pdf_text(cat_name.upper()), col_header_style), ""]],
             colWidths=col_widths,
         )
         header_table.setStyle(TableStyle([
@@ -425,7 +435,7 @@ def _build_price_list_pdf(products: list, lead: dict, es_mayorista: bool) -> byt
                 price_val = None
             promo = p.get("precio_promo")
             price_text = fmt(promo) + " ✦" if promo else (fmt(price_val) if price_val is not None else "Consultar")
-            rows.append([Paragraph(p.get("nombre", "—"), normal), Paragraph(price_text, price_style)])
+            rows.append([Paragraph(_pdf_text(p.get("nombre", "—")), normal), Paragraph(price_text, price_style)])
 
         if rows:
             prod_table = Table(rows, colWidths=col_widths)
