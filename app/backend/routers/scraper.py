@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import logging
 import re
 import time
 import json
@@ -11,9 +12,14 @@ from pydantic import BaseModel
 
 from services.auth import OrgContext, get_current_org
 from services.supabase_client import db, ScopedSupabaseClient
+from services.scraping_utils import discover_website_ddg
+from sources import SOURCE_REGISTRY, DEFAULT_SOURCES
+from sources.google_places import DEFAULT_QUERIES, MAYORISTA_QUERIES, PlacesAPIError
 from config import settings
 
 router = APIRouter(prefix="/scraper", tags=["scraper"])
+
+logger = logging.getLogger(__name__)
 
 
 class ScraperStartRequest(BaseModel):
@@ -21,265 +27,12 @@ class ScraperStartRequest(BaseModel):
     google_api_key: Optional[str] = None
     max_per_query: int = 60
     tipo_cliente: str = "lead"  # "lead" or "mayorista"
+    sources: Optional[List[str]] = None
+    source_options: Optional[dict] = None
 
 
 class EnrichRequest(BaseModel):
     lead_ids: Optional[List[str]] = None  # if None, enrich all without email
-
-
-# ─────────────────────────────────────────────
-# GOOGLE PLACES HELPERS (inline from scraper_holistica.py)
-# ─────────────────────────────────────────────
-
-IRRELEVANT_PLACE_TYPES = {
-    "gym", "fitness_center", "restaurant", "food", "bar", "cafe", "bakery",
-    "meal_takeaway", "meal_delivery", "supermarket", "grocery_or_supermarket",
-    "lodging", "hotel", "car_repair", "car_dealer", "car_wash", "gas_station",
-    "bank", "atm", "school", "university", "hospital", "doctor", "dentist",
-    "pharmacy", "veterinary_care", "hair_care", "beauty_salon", "spa",
-    "laundry", "accounting", "lawyer", "insurance_agency", "real_estate_agency",
-    "night_club", "movie_theater", "bowling_alley", "stadium",
-}
-
-DEFAULT_QUERIES = [
-    # ── Nacional ──
-    "tienda sahumerios Argentina",
-    "tienda holistica Argentina",
-    "tienda esoterica Argentina",
-    "tienda new age Argentina",
-    "aromaterapia tienda Argentina",
-    "velas aromaticas tienda Argentina",
-    "lamparas de sal himalaya tienda Argentina",
-    "bazar espiritual Argentina",
-    "santeria Argentina",
-    "cristales y piedras tienda Argentina",
-    "tienda naturista aromaterapia Argentina",
-    "defumacion hierbas tienda Argentina",
-    "decoracion feng shui tienda Argentina",
-    "fuente agua decorativa tienda Argentina",
-
-    # ── Buenos Aires (CABA) ──
-    "tienda sahumerios Buenos Aires",
-    "tienda holistica Buenos Aires",
-    "tienda esoterica Buenos Aires",
-    "aromaterapia Buenos Aires",
-    "cristales piedras Buenos Aires",
-    "bazar espiritual Buenos Aires",
-    "tienda naturista Buenos Aires",
-    "santeria Buenos Aires",
-    "libreria esoterica Buenos Aires",
-    "velas aromaticas Buenos Aires",
-    "lampara sal himalaya Buenos Aires",
-    "tienda new age Buenos Aires",
-
-    # ── GBA ──
-    "tienda holistica Quilmes",
-    "tienda esoterica Morón",
-    "sahumerios La Matanza",
-    "tienda holistica Lomas de Zamora",
-    "sahumerios Avellaneda",
-    "tienda holistica San Martín Buenos Aires",
-    "tienda esoterica Tigre",
-    "sahumerios Lanús",
-    "tienda holistica Merlo Buenos Aires",
-    "tienda esoterica Florencio Varela",
-    "sahumerios Berazategui",
-    "tienda holistica Moreno Buenos Aires",
-    "tienda esoterica Almirante Brown",
-    "sahumerios Tres de Febrero",
-
-    # ── Córdoba ──
-    "tienda sahumerios Córdoba",
-    "tienda holistica Córdoba",
-    "tienda esoterica Córdoba",
-    "aromaterapia Córdoba",
-    "cristales piedras Córdoba",
-    "tienda naturista Córdoba",
-    "santeria Córdoba",
-    "lampara sal himalaya Córdoba",
-    "tienda holistica Río Cuarto",
-    "sahumerios Rio Cuarto",
-    "tienda holistica Villa María Córdoba",
-
-    # ── Rosario ──
-    "tienda sahumerios Rosario",
-    "tienda holistica Rosario",
-    "tienda esoterica Rosario",
-    "aromaterapia Rosario",
-    "cristales Rosario",
-    "lampara sal himalaya Rosario",
-
-    # ── Mendoza ──
-    "tienda sahumerios Mendoza",
-    "tienda holistica Mendoza",
-    "tienda esoterica Mendoza",
-    "aromaterapia Mendoza",
-    "cristales piedras Mendoza",
-
-    # ── La Plata ──
-    "tienda sahumerios La Plata",
-    "tienda holistica La Plata",
-    "tienda esoterica La Plata",
-
-    # ── Mar del Plata ──
-    "tienda sahumerios Mar del Plata",
-    "tienda holistica Mar del Plata",
-    "tienda esoterica Mar del Plata",
-
-    # ── Tucumán ──
-    "tienda sahumerios Tucumán",
-    "tienda holistica Tucumán",
-    "tienda esoterica Tucumán",
-    "tienda holistica San Miguel de Tucumán",
-
-    # ── Salta ──
-    "tienda sahumerios Salta",
-    "tienda holistica Salta",
-    "tienda esoterica Salta",
-
-    # ── Santa Fe ──
-    "tienda sahumerios Santa Fe",
-    "tienda holistica Santa Fe",
-    "tienda esoterica Santa Fe",
-
-    # ── Neuquén ──
-    "tienda sahumerios Neuquén",
-    "tienda holistica Neuquén",
-
-    # ── Bahía Blanca ──
-    "tienda sahumerios Bahia Blanca",
-    "tienda holistica Bahia Blanca",
-
-    # ── Corrientes ──
-    "tienda holistica Corrientes",
-    "sahumerios Corrientes",
-
-    # ── Chaco ──
-    "tienda holistica Resistencia",
-    "sahumerios Resistencia",
-
-    # ── Misiones ──
-    "tienda holistica Posadas",
-    "sahumerios Posadas",
-
-    # ── Jujuy ──
-    "tienda sahumerios Jujuy",
-    "tienda holistica Jujuy",
-
-    # ── San Juan ──
-    "tienda holistica San Juan",
-    "sahumerios San Juan",
-
-    # ── Entre Ríos ──
-    "tienda holistica Paraná",
-    "sahumerios Concordia",
-    "tienda holistica Gualeguaychú",
-
-    # ── Patagonia ──
-    "tienda holistica Bariloche",
-    "sahumerios Bariloche",
-    "tienda holistica Comodoro Rivadavia",
-    "tienda holistica Río Gallegos",
-    "tienda holistica Ushuaia",
-
-    # ── San Luis ──
-    "tienda holistica San Luis",
-
-    # ── Catamarca ──
-    "tienda holistica Catamarca",
-
-    # ── Santiago del Estero ──
-    "tienda holistica Santiago del Estero",
-
-    # ── La Rioja ──
-    "tienda holistica La Rioja",
-
-    # ── Formosa ──
-    "tienda holistica Formosa",
-]
-
-MAYORISTA_QUERIES = [
-    "distribuidor sahumerios Argentina",
-    "mayorista productos holísticos Argentina",
-    "distribuidor inciensos Argentina",
-    "mayorista velas aromaticas Argentina",
-    "distribuidor esencias aromáticas Argentina",
-    "importador sahumerios Argentina",
-    "mayorista productos esotéricos Argentina",
-    "distribuidor chakras aromaterapia Argentina",
-    "mayorista incienso sándalo nag champa Argentina",
-    "distribuidor tiendas espirituales Argentina",
-    "mayorista sahumerios Buenos Aires",
-    "distribuidor holístico Córdoba",
-    "mayorista aromaterapia Rosario",
-    "importador velas soja Argentina",
-    "distribuidor products naturales holísticos Argentina",
-]
-
-
-class PlacesAPIError(Exception):
-    """Raised when the Google Places API itself reports an error status
-    (bad/missing key, quota exceeded, etc). The HTTP request still returns
-    200 OK in these cases, so this can't be caught via raise_for_status()."""
-
-
-def _places_text_search(api_key: str, query: str, page_token: Optional[str] = None) -> dict:
-    import httpx
-    url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-    params = {
-        "query": query,
-        "key": api_key,
-        "language": "es",
-        "region": "ar",
-    }
-    if page_token:
-        params["pagetoken"] = page_token
-
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-
-    status = data.get("status")
-    if status not in ("OK", "ZERO_RESULTS"):
-        raise PlacesAPIError(f"{status}: {data.get('error_message', 'Google Places API error')}")
-    return data
-
-
-def _place_details(api_key: str, place_id: str) -> dict:
-    import httpx
-    url = "https://maps.googleapis.com/maps/api/place/details/json"
-    params = {
-        "place_id": place_id,
-        "key": api_key,
-        "fields": "name,formatted_address,formatted_phone_number,international_phone_number,website,rating,user_ratings_total,price_level,opening_hours,address_components,url",
-        "language": "es",
-    }
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json().get("result", {})
-
-
-def _extract_province(address_components: list) -> str:
-    for comp in address_components:
-        if "administrative_area_level_1" in comp.get("types", []):
-            return comp.get("long_name", "")
-    return ""
-
-
-def _extract_city(address_components: list) -> str:
-    for comp in address_components:
-        if "locality" in comp.get("types", []):
-            return comp.get("long_name", "")
-    return ""
-
-
-def _infer_instagram(name: str, website: str = "") -> str:
-    if website and "instagram.com" in website:
-        return website
-    slug = re.sub(r"[^a-z0-9]", "", name.lower().replace(" ", ""))
-    return f"@{slug[:20]}"
 
 
 def _score_lead(record: dict) -> int:
@@ -644,141 +397,100 @@ def _scrape_website(url: str) -> dict:
     return result
 
 
-def _discover_website(empresa: str, ciudad: str, api_key: str) -> str:
-    """Re-query Google Places for a business that has no website stored."""
-    if not api_key or not empresa:
+def _discover_website(empresa: str, ciudad: str, provincia: str = "") -> str:
+    """Free website discovery via DuckDuckGo HTML search (no API key)."""
+    if not empresa:
         return ""
-    try:
-        query = f"{empresa} {ciudad} Argentina"
-        data = _places_text_search(api_key, query)
-        places = data.get("results", [])
-        if places:
-            pid = places[0].get("place_id", "")
-            if pid:
-                details = _place_details(api_key, pid)
-                return details.get("website", "")
-    except Exception:
-        pass
-    return ""
+    return discover_website_ddg(empresa, ciudad, provincia)
 
 
 # ─────────────────────────────────────────────
 # BACKGROUND TASKS
 # ─────────────────────────────────────────────
 
-def _run_scraper_job(job_id: str, queries: List[str], api_key: str, max_per_query: int, tipo_cliente: str = "lead", org_id: str = None):
+def _run_scraper_job(
+    job_id: str,
+    sources: List[str],
+    queries: List[str],
+    api_key: str,
+    max_per_query: int,
+    tipo_cliente: str = "lead",
+    source_options: Optional[dict] = None,
+    org_id: str = None,
+):
     scoped_db = ScopedSupabaseClient(db, org_id)
-    seen_ids: set = set()
-    results = []
-    total_queries = len(queries)
+    source_options = source_options or {}
+    total_found = 0
+    new_found = 0
+    num_sources = len(sources)
 
     try:
         scoped_db.update("scraper_jobs", job_id, {
             "status": "running",
             "started_at": datetime.now(timezone.utc).isoformat(),
-            "total": total_queries,
+            "total": num_sources,
             "progress": 0,
         })
 
-        for i, query in enumerate(queries):
-            next_page_token = None
-            page = 0
+        for source_index, source_id in enumerate(sources):
+            iter_fn = SOURCE_REGISTRY.get(source_id)
+            if not iter_fn:
+                logger.warning("Unknown scraper source %r, skipping", source_id)
+                continue
 
-            while page < 3:
-                try:
-                    if page > 0 and next_page_token:
-                        time.sleep(2)
+            kwargs = {"tipo_cliente": tipo_cliente, **source_options.get(source_id, {})}
+            if source_id == "google_places":
+                kwargs["api_key"] = api_key
+                kwargs.setdefault("queries", queries)
+                kwargs.setdefault("max_per_query", max_per_query)
 
-                    data = _places_text_search(api_key, query, next_page_token)
-                    places = data.get("results", [])
+            try:
+                for record in iter_fn(**kwargs):
+                    total_found += 1
+                    record["score_ia"] = _score_lead(record)
 
-                    for place in places:
-                        pid = place.get("place_id")
-                        if pid in seen_ids:
-                            continue
-                        seen_ids.add(pid)
-
-                        place_types = set(place.get("types", []))
-                        if place_types & IRRELEVANT_PLACE_TYPES:
-                            continue
-
-                        time.sleep(0.1)
-                        details = _place_details(api_key, pid)
-
-                        addr_comps = details.get("address_components", [])
-                        phone = details.get("formatted_phone_number", "") or details.get(
-                            "international_phone_number", ""
+                    try:
+                        existing = scoped_db.select(
+                            "leads",
+                            filters={
+                                "empresa": f"eq.{record['empresa']}",
+                                "tipo_cliente": f"eq.{tipo_cliente}",
+                            },
+                            limit=1,
                         )
-                        website = details.get("website", "")
+                        if not existing:
+                            scoped_db.insert("leads", record)
+                            new_found += 1
+                    except Exception:
+                        new_found += 1
 
-                        record = {
-                            "empresa": details.get("name", place.get("name", "")),
-                            "rubro": "Tienda Holística / Sahumerios",
-                            "direccion": details.get("formatted_address", ""),
-                            "ciudad": _extract_city(addr_comps),
-                            "provincia": _extract_province(addr_comps),
-                            "telefono": phone,
-                            "website": website,
-                            "google_maps_url": details.get("url", ""),
-                            "rating": details.get("rating"),
-                            "reviews_count": details.get("user_ratings_total"),
-                            "price_level": details.get("price_level"),
-                            "horarios": "; ".join(
-                                details.get("opening_hours", {}).get("weekday_text", [])
-                            ),
-                            "instagram": _infer_instagram(place.get("name", ""), website),
-                            "email": "",
-                            "whatsapp": phone.replace(" ", "").replace("-", "").replace("+", "")
-                            if phone
-                            else "",
-                            "observaciones": "",
-                            "fuente": "Google Places API",
-                            "fecha_extraccion": datetime.now(timezone.utc).date().isoformat(),
-                            "estado": "nuevo",
-                            "tipo_cliente": tipo_cliente,
-                        }
-                        record["score_ia"] = _score_lead(record)
+                    if total_found % 10 == 0:
+                        scoped_db.update("scraper_jobs", job_id, {
+                            "new_found": new_found,
+                            "total_found": total_found,
+                        })
+            except NotImplementedError as exc:
+                logger.warning("Skipping source %r: %s", source_id, exc)
+                continue
+            except PlacesAPIError:
+                raise
+            except Exception:
+                logger.exception("Source %r failed, continuing with remaining sources", source_id)
+                continue
 
-                        try:
-                            existing = scoped_db.select(
-                                "leads",
-                                filters={
-                                    "empresa": f"eq.{record['empresa']}",
-                                    "tipo_cliente": f"eq.{tipo_cliente}",
-                                },
-                                limit=1,
-                            )
-                            if not existing:
-                                scoped_db.insert("leads", record)
-                                results.append(record)
-                        except Exception:
-                            results.append(record)
-
-                    next_page_token = data.get("next_page_token")
-                    if not next_page_token:
-                        break
-                    page += 1
-
-                except PlacesAPIError:
-                    raise
-                except Exception:
-                    break
-
-            time.sleep(0.5)
-
-            progress = int(((i + 1) / total_queries) * 100)
+            progress = int(100 * (source_index + 1) / num_sources)
             scoped_db.update("scraper_jobs", job_id, {
                 "progress": progress,
-                "new_found": len(results),
-                "total_found": len(seen_ids),
+                "new_found": new_found,
+                "total_found": total_found,
             })
 
         scoped_db.update("scraper_jobs", job_id, {
             "status": "completed",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "progress": 100,
-            "new_found": len(results),
-            "total_found": len(seen_ids),
+            "new_found": new_found,
+            "total_found": total_found,
         })
 
     except Exception as exc:
@@ -802,7 +514,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             all_leads = scoped_db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
         else:
             all_leads = scoped_db.raw_select("leads", {
-                "select": "id,empresa,website,email,telefono,instagram,whatsapp",
+                "select": "id,empresa,website,email,telefono,instagram,whatsapp,ciudad,provincia",
                 "website": "neq.",
                 "or": "(email.is.null,email.eq.)",
                 "order": "id.asc",
@@ -814,17 +526,15 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
 
         scoped_db.update("scraper_jobs", job_id, {"total": total})
 
-        google_api_key = settings.GOOGLE_API_KEY or ""
-
         for i, lead in enumerate(all_leads):
             website = lead.get("website", "") or ""
 
-            # If no website from Google Places, try to discover it
+            # If no website on file, try to discover it for free via DuckDuckGo
             if not website and lead.get("empresa"):
                 website = _discover_website(
                     lead.get("empresa", ""),
                     lead.get("ciudad", ""),
-                    google_api_key,
+                    lead.get("provincia", ""),
                 )
                 if website:
                     scoped_db.update("leads", lead["id"], {"website": website})
@@ -852,7 +562,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             if (i + 1) % 25 == 0:
                 gc.collect()
 
-            time.sleep(0.3)
+            time.sleep(0.5)
             progress = int(((i + 1) / max(total, 1)) * 100)
             scoped_db.update("scraper_jobs", job_id, {
                 "progress": progress,
@@ -884,11 +594,13 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
 
 @router.post("/start")
 def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
+    sources = body.sources or DEFAULT_SOURCES
+
     api_key = body.google_api_key or settings.GOOGLE_API_KEY
-    if not api_key:
+    if "google_places" in sources and not api_key:
         raise HTTPException(
             status_code=400,
-            detail="Google API key required. Pass google_api_key in the request body or set GOOGLE_API_KEY env var.",
+            detail="Google API key required for the google_places source. Pass google_api_key in the request body or set GOOGLE_API_KEY env var.",
         )
 
     # Auto-fail any stuck jobs before checking for conflicts
@@ -901,18 +613,21 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, 
         raise HTTPException(status_code=409, detail="Ya hay un job corriendo. Esperá a que termine antes de iniciar otro.")
 
     tipo_cliente = body.tipo_cliente or "lead"
-    if body.queries:
-        queries = body.queries
-    elif tipo_cliente == "mayorista":
-        queries = MAYORISTA_QUERIES
-    else:
-        queries = DEFAULT_QUERIES
+    queries: List[str] = []
+    if "google_places" in sources:
+        if body.queries:
+            queries = body.queries
+        elif tipo_cliente == "mayorista":
+            queries = MAYORISTA_QUERIES
+        else:
+            queries = DEFAULT_QUERIES
 
     job = current_org.db.insert("scraper_jobs", {
         "status": "pending",
         "queries": queries,
+        "sources": sources,
         "progress": 0,
-        "total": len(queries),
+        "total": len(sources),
         "new_found": 0,
         "total_found": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -923,9 +638,12 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, 
         raise HTTPException(status_code=500, detail="Failed to create scraper job")
 
     org_id = current_org.organization_id
-    background_tasks.add_task(_run_scraper_job, str(job_id), queries, api_key, body.max_per_query, tipo_cliente, org_id)
+    background_tasks.add_task(
+        _run_scraper_job, str(job_id), sources, queries, api_key, body.max_per_query,
+        tipo_cliente, body.source_options, org_id,
+    )
 
-    return {"job_id": job_id, "status": "pending", "queries_count": len(queries), "tipo_cliente": tipo_cliente}
+    return {"job_id": job_id, "status": "pending", "sources": sources, "tipo_cliente": tipo_cliente}
 
 
 @router.get("/jobs")
@@ -1025,6 +743,7 @@ def get_history(current_org: OrgContext = Depends(get_current_org)):
             "progress": job.get("progress", 0),
             "total": job.get("total", 0),
             "tipo": "enrichment" if job.get("queries") == ["enrichment"] else "scraper",
+            "sources": job.get("sources"),
         }
         for job in jobs
     ]
