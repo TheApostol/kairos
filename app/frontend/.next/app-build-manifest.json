@@ -63,7 +63,7 @@
       "static/chunks/685-b0fdfeb212e72ab9.js",
       "static/chunks/600-46a88d1adca9cd84.js",
       "static/chunks/374-84fc46298584be82.js",
-      "static/chunks/app/campaigns/page-05f77f847e135302.js"
+      "static/chunks/app/campaigns/page-8e4d60b68dc187f9.js"
     ],
     "/catalog/page": [
       "static/chunks/webpack-e26ca52b2800bf41.js",
@@ -140,19 +140,6 @@
       "static/chunks/648-19999d89ec5fb036.js",
       "static/chunks/app/onboarding/page-8be25ea8ef43eddf.js"
     ],
-    "/orders/[id]/page": [
-      "static/chunks/webpack-e26ca52b2800bf41.js",
-      "static/chunks/fd9d1056-7a1bb63d1f317993.js",
-      "static/chunks/23-ba69702ac001ddce.js",
-      "static/chunks/main-app-acbef76fcca84a01.js",
-      "static/chunks/44530001-09888739cfb6cad0.js",
-      "static/chunks/127-b164746452dea461.js",
-      "static/chunks/685-b0fdfeb212e72ab9.js",
-      "static/chunks/629-22c7e0b8cecccf98.js",
-      "static/chunks/600-46a88d1adca9cd84.js",
-      "static/chunks/566-a3ec29963eb610e6.js",
-      "static/chunks/app/orders/[id]/page-32dbed6bd1e095df.js"
-    ],
     "/orders/page": [
       "static/chunks/webpack-e26ca52b2800bf41.js",
       "static/chunks/fd9d1056-7a1bb63d1f317993.js",
@@ -166,6 +153,19 @@
       "static/chunks/374-84fc46298584be82.js",
       "static/chunks/566-a3ec29963eb610e6.js",
       "static/chunks/app/orders/page-c6f7c333957d5851.js"
+    ],
+    "/orders/[id]/page": [
+      "static/chunks/webpack-e26ca52b2800bf41.js",
+      "static/chunks/fd9d1056-7a1bb63d1f317993.js",
+      "static/chunks/23-ba69702ac001ddce.js",
+      "static/chunks/main-app-acbef76fcca84a01.js",
+      "static/chunks/44530001-09888739cfb6cad0.js",
+      "static/chunks/127-b164746452dea461.js",
+      "static/chunks/685-b0fdfeb212e72ab9.js",
+      "static/chunks/629-22c7e0b8cecccf98.js",
+      "static/chunks/600-46a88d1adca9cd84.js",
+      "static/chunks/566-a3ec29963eb610e6.js",
+      "static/chunks/app/orders/[id]/page-32dbed6bd1e095df.js"
     ],
     "/page": [
       "static/chunks/webpack-e26ca52b2800bf41.js",
@@ -219,7 +219,7 @@
       "static/chunks/685-b0fdfeb212e72ab9.js",
       "static/chunks/629-22c7e0b8cecccf98.js",
       "static/chunks/566-a3ec29963eb610e6.js",
-      "static/chunks/app/team/page-e5ced304c5fcc017.js"
+      "static/chunks/app/team/page-8f8f31ce0a1eb6a3.js"
     ],
     "/public/catalog/page": [
       "static/chunks/webpack-e26ca52b2800bf41.js",
