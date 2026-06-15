@@ -79,6 +79,18 @@ function formatCurrency(n: number) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n)
 }
 
+function getGreeting() {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Buenos días'
+  if (hour < 19) return 'Buenas tardes'
+  return 'Buenas noches'
+}
+
+function formatToday() {
+  const formatted = new Intl.DateTimeFormat('es-AR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1)
+}
+
 export default function DashboardPage() {
   const [leadStats, setLeadStats] = useState<LeadStats | null>(null)
   const [orderStats, setOrderStats] = useState<OrderStats | null>(null)
@@ -297,17 +309,17 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Dashboard</h1>
-        <p className="mt-1" style={{ color: '#6B4F3A' }}>Resumen general del CRM</p>
+        <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>{getGreeting()}</h1>
+        <p className="mt-1 capitalize" style={{ color: '#6B4F3A' }}>{formatToday()} · Resumen general del CRM</p>
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
         {statCards.map(({ title, value, icon: Icon, iconColor, iconBg, href, ...rest }) => {
           const urgent = (rest as { urgent?: boolean }).urgent
           return (
             <Link key={title} href={href ?? '#'}>
-              <Card className={`cursor-pointer hover:shadow-md transition-shadow ${urgent ? 'ring-2 ring-red-300' : ''}`}>
+              <Card className={`cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all ${urgent ? 'ring-2 ring-red-300' : ''}`}>
                 <CardContent className="pt-4 pb-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">

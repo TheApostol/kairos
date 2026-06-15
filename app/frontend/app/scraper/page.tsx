@@ -281,8 +281,8 @@ export default function ScraperPage() {
   return (
     <div className="space-y-6 max-w-4xl">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Scraper de Leads</h1>
-        <p className="text-slate-500 mt-1">Busca tiendas holísticas, esotéricas y de sahumerios en toda Argentina</p>
+        <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Scraper de Leads</h1>
+        <p className="mt-1" style={{ color: '#6B4F3A' }}>Busca tiendas holísticas, esotéricas y de sahumerios en toda Argentina</p>
       </div>
 
       {/* Action Cards */}
