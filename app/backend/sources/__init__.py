@@ -25,5 +25,6 @@ from . import datos_gob  # noqa: E402,F401
 from . import overpass  # noqa: E402,F401
 from . import paginas_amarillas  # noqa: E402,F401
 from . import ecored  # noqa: E402,F401
+from . import web_search  # noqa: E402,F401
 
-DEFAULT_SOURCES = ["green_life", "overpass", "datos_gob"]
+DEFAULT_SOURCES = ["green_life", "overpass", "datos_gob", "web_search"]

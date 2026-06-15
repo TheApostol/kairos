@@ -11,8 +11,10 @@ import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import unquote
 
 import httpx
+from bs4 import BeautifulSoup
 
 USER_AGENT = (
     "KairosLeadBot/1.0 (+https://kairos.polkorp.com; "
@@ -174,21 +176,21 @@ def make_lead_record(
 
 
 # ─────────────────────────────────────────────
-# Free website discovery via DuckDuckGo HTML search
+# Free website/lead discovery via DuckDuckGo HTML search
 # ─────────────────────────────────────────────
 
-_EXCLUDED_DOMAINS = (
+EXCLUDED_DOMAINS = (
     "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com",
     "linkedin.com", "youtube.com", "whatsapp.com", "wa.me",
     "paginasamarillas.com.ar", "guiacomerciales.com", "green-life.com.ar",
     "ecored.org", "mercadolibre.com", "mercadolibre.com.ar",
     "maps.google.com", "google.com", "goo.gl",
-    "openstreetmap.org", "datos.jus.gob.ar",
+    "openstreetmap.org", "datos.jus.gob.ar", "duckduckgo.com",
 )
 
 # DDG's HTML endpoint anti-bot checks are picky about looking like a real
 # browser — a generic identifying UA gets a 202 "anomaly" response.
-_DDG_HEADERS = {
+DDG_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -196,10 +198,58 @@ _DDG_HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded",
 }
 
-_DDG_RESULT_HREF_REGEX = re.compile(r'class="result__a"[^>]*href="([^"]+)"')
 _DDG_REDIRECT_URL_REGEX = re.compile(r"uddg=([^&]+)")
 
 _ddg_rate_limiter = RateLimiter(min_interval=1.0, jitter=1.0)
+
+
+def ddg_html_search(query: str, max_results: int = 8) -> list[dict]:
+    """Free web search via DuckDuckGo's HTML endpoint (no API key).
+
+    Returns up to `max_results` results as `{"title", "url", "snippet"}`
+    dicts, filtering out directories/social networks/map services (see
+    `EXCLUDED_DOMAINS`). Best-effort: returns `[]` if DDG rate-limits/blocks
+    the request or no results survive the filter.
+    """
+    resp = fetch_with_retries(
+        "https://html.duckduckgo.com/html/",
+        method="POST",
+        rate_limiter=_ddg_rate_limiter,
+        data={"q": query},
+        headers=DDG_HEADERS,
+        timeout=15,
+        max_retries=2,
+    )
+    if resp is None or resp.status_code != 200:
+        return []
+
+    soup = BeautifulSoup(resp.text, "lxml")
+    results = []
+    for result in soup.select("div.result"):
+        link = result.select_one("a.result__a")
+        if not link:
+            continue
+
+        href = link.get("href", "")
+        url = href
+        m = _DDG_REDIRECT_URL_REGEX.search(href)
+        if m:
+            url = unquote(m.group(1))
+
+        if not url.startswith("http"):
+            continue
+        if any(domain in url for domain in EXCLUDED_DOMAINS):
+            continue
+
+        title = link.get_text(" ", strip=True)
+        snippet_el = result.select_one("a.result__snippet, .result__snippet")
+        snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
+
+        results.append({"title": title, "url": url, "snippet": snippet})
+        if len(results) >= max_results:
+            break
+
+    return results
 
 
 def discover_website_ddg(empresa: str, ciudad: str = "", provincia: str = "") -> str:
@@ -215,36 +265,10 @@ def discover_website_ddg(empresa: str, ciudad: str = "", provincia: str = "") ->
     query_parts = [empresa, ciudad, provincia, "Argentina"]
     query = " ".join(p for p in query_parts if p)
 
-    resp = fetch_with_retries(
-        "https://html.duckduckgo.com/html/",
-        method="POST",
-        rate_limiter=_ddg_rate_limiter,
-        data={"q": query},
-        headers=_DDG_HEADERS,
-        timeout=15,
-        max_retries=2,
-    )
-    if resp is None or resp.status_code != 200:
-        return ""
-
-    from urllib.parse import unquote
-
-    for raw_href in _DDG_RESULT_HREF_REGEX.findall(resp.text):
-        url = raw_href
-        m = _DDG_REDIRECT_URL_REGEX.search(raw_href)
-        if m:
-            url = unquote(m.group(1))
-
-        if not url.startswith("http"):
-            continue
-        if any(domain in url for domain in _EXCLUDED_DOMAINS):
-            continue
-        if "duckduckgo.com" in url:
-            continue
-
+    for result in ddg_html_search(query, max_results=5):
         # Strip to scheme://host for a clean "website" field
-        m2 = re.match(r"(https?://[^/]+)", url)
-        if m2:
-            return m2.group(1)
+        m = re.match(r"(https?://[^/]+)", result["url"])
+        if m:
+            return m.group(1)
 
     return ""

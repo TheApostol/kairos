@@ -18,7 +18,7 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Users, Mail, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package, Globe, RefreshCw } from 'lucide-react'
+import { Users, Mail, MessageCircle, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package, Globe, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 import { getLeads, getProducts, scrapeKairosdis, getKairosdisScraperStatus } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -45,6 +45,7 @@ interface CatalogProduct {
 interface LeadStats {
   total: number
   con_email: number
+  con_whatsapp: number
   por_provincia: Array<{ provincia: string; count: number }>
   por_estado: Array<{ estado: string; count: number }>
 }
@@ -176,6 +177,7 @@ export default function DashboardPage() {
   const totalLeads = leadStats?.total ?? 0
   const clientesCount = (leadStats?.por_estado ?? []).find((e) => e.estado === 'cliente')?.count ?? 0
   const sinEmail = leadStats ? (leadStats.total - leadStats.con_email) : 0
+  const sinWhatsapp = leadStats ? (leadStats.total - leadStats.con_whatsapp) : 0
   const conversionRate = totalLeads > 0 ? ((clientesCount / totalLeads) * 100).toFixed(1) : '0'
 
   const statCards = [
@@ -201,6 +203,22 @@ export default function DashboardPage() {
       icon: Mail,
       iconColor: sinEmail > 500 ? '#dc2626' : '#f59e0b',
       iconBg: sinEmail > 500 ? '#fef2f2' : '#fffbeb',
+      href: '/scraper',
+    },
+    {
+      title: 'Con WhatsApp',
+      value: leadStats?.con_whatsapp?.toLocaleString('es-AR') ?? '—',
+      icon: MessageCircle,
+      iconColor: '#22c55e',
+      iconBg: '#f0fdf4',
+      href: '/leads',
+    },
+    {
+      title: 'Sin WhatsApp',
+      value: leadStats ? sinWhatsapp.toLocaleString('es-AR') : '—',
+      icon: MessageCircle,
+      iconColor: sinWhatsapp > 500 ? '#dc2626' : '#f59e0b',
+      iconBg: sinWhatsapp > 500 ? '#fef2f2' : '#fffbeb',
       href: '/scraper',
     },
     {

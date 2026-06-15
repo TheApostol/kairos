@@ -296,11 +296,12 @@ export const SCRAPER_SOURCES = [
   { id: 'green_life', label: 'Green-Life (Tiendas Naturistas)' },
   { id: 'overpass', label: 'OpenStreetMap (Overpass)' },
   { id: 'datos_gob', label: 'Registro Nacional de Sociedades' },
+  { id: 'web_search', label: 'Búsqueda Web (DuckDuckGo)' },
   { id: 'paginas_amarillas', label: 'Páginas Amarillas', experimental: true },
   { id: 'google_places', label: 'Google Places', requiresApiKey: true },
 ] as const
 
-export const DEFAULT_SCRAPER_SOURCES = ['green_life', 'overpass', 'datos_gob']
+export const DEFAULT_SCRAPER_SOURCES = ['green_life', 'overpass', 'datos_gob', 'web_search']
 
 export async function getScraperHistory() {
   return apiFetch('/scraper/history')
