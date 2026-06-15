@@ -178,6 +178,14 @@ export default function ScraperPage() {
             setCurrentQuery(data.query)
             setLogLines((prev) => [...prev.slice(-49), `[${new Date().toLocaleTimeString('es-AR')}] ${data.query}`])
           }
+          if (data.error) {
+            es.close()
+            autoCombinedRef.current = false
+            setScraperState('error')
+            setLogLines((prev) => [...prev, `ERROR: ${data.error}`])
+            fetchHistory()
+            return
+          }
           if (data.done || data.progress >= 100) {
             es.close()
             setScraperState('done')
@@ -190,11 +198,6 @@ export default function ScraperPage() {
               setLogLines((prev) => [...prev, '→ Iniciando enriquecimiento automático...'])
               setTimeout(() => startEnrichment(), 1500)
             }
-          }
-          if (data.error) {
-            es.close()
-            setScraperState('error')
-            setLogLines((prev) => [...prev, `ERROR: ${data.error}`])
           }
         } catch {}
       }
