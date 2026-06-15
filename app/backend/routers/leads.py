@@ -118,11 +118,12 @@ def list_leads(
 
 @router.get("/stats")
 def get_leads_stats(current_org: OrgContext = Depends(get_current_org)):
-    all_leads = current_org.db.select_all("leads", select_cols="estado,provincia,email")
+    all_leads = current_org.db.select_all("leads", select_cols="estado,provincia,email,whatsapp")
 
     by_estado: dict = {}
     by_provincia: dict = {}
     con_email = 0
+    con_whatsapp = 0
 
     for lead in all_leads:
         estado = lead.get("estado") or "nuevo"
@@ -134,6 +135,9 @@ def get_leads_stats(current_org: OrgContext = Depends(get_current_org)):
         if lead.get("email"):
             con_email += 1
 
+        if lead.get("whatsapp"):
+            con_whatsapp += 1
+
     por_provincia = sorted(
         [{"provincia": k, "count": v} for k, v in by_provincia.items()],
         key=lambda x: x["count"],
@@ -144,6 +148,7 @@ def get_leads_stats(current_org: OrgContext = Depends(get_current_org)):
     return {
         "total": len(all_leads),
         "con_email": con_email,
+        "con_whatsapp": con_whatsapp,
         "por_provincia": por_provincia,
         "por_estado": por_estado,
     }
