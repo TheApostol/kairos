@@ -7,15 +7,15 @@
   "/catalog/page": "app/catalog/page.js",
   "/leads/[id]/page": "app/leads/[id]/page.js",
   "/leads/page": "app/leads/page.js",
+  "/mayoristas/page": "app/mayoristas/page.js",
   "/login/page": "app/login/page.js",
   "/onboarding/page": "app/onboarding/page.js",
-  "/mayoristas/page": "app/mayoristas/page.js",
   "/orders/[id]/page": "app/orders/[id]/page.js",
   "/orders/page": "app/orders/page.js",
-  "/pipeline/page": "app/pipeline/page.js",
   "/page": "app/page.js",
+  "/pipeline/page": "app/pipeline/page.js",
   "/scraper/page": "app/scraper/page.js",
-  "/signup/page": "app/signup/page.js",
   "/team/page": "app/team/page.js",
+  "/signup/page": "app/signup/page.js",
   "/public/catalog/page": "app/public/catalog/page.js"
 }
