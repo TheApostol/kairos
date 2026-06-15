@@ -169,8 +169,9 @@ export default function PipelinePage() {
                 {/* Cards */}
                 <div className="space-y-2">
                   {colLeads.length === 0 && !isOver ? (
-                    <div className="text-center py-8 text-slate-400 text-xs">
-                      Sin leads
+                    <div className="flex flex-col items-center justify-center py-8 text-slate-400 text-xs gap-1 border-2 border-dashed border-slate-200/70 rounded-lg">
+                      <span>Sin leads</span>
+                      <span className="opacity-70">Arrastrá una tarjeta aquí</span>
                     </div>
                   ) : (
                     colLeads.map((lead) => {

@@ -32,7 +32,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { getLeads, getLeadStats, getLeadRubros, apiFetch, downloadFile, updateLead, quickSendLeads, generateCampaignText } from '@/lib/api'
-import { Search, Download, ChevronLeft, ChevronRight, Loader2, Mail, MessageSquare, FileDown, Sparkles, Upload } from 'lucide-react'
+import { Search, Download, ChevronLeft, ChevronRight, Loader2, Mail, MessageSquare, FileDown, Sparkles, Upload, Users } from 'lucide-react'
 
 interface Lead {
   id: number
@@ -385,8 +385,10 @@ export default function LeadsPage() {
               <Loader2 className="w-6 h-6 animate-spin opacity-50" style={{ color: '#6B4F3A' }} />
             </div>
           ) : leads.length === 0 ? (
-            <div className="flex items-center justify-center h-48" style={{ color: '#6B4F3A' }}>
-              No se encontraron leads
+            <div className="flex flex-col items-center justify-center h-48 gap-2" style={{ color: '#6B4F3A' }}>
+              <Users className="w-8 h-8 opacity-30" />
+              <p className="text-sm font-medium">No se encontraron leads</p>
+              <p className="text-xs opacity-70">Probá ajustar los filtros o importar nuevos leads</p>
             </div>
           ) : (
             <>
