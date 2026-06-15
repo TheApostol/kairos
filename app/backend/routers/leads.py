@@ -35,6 +35,27 @@ class NoteCreate(BaseModel):
     text: str
 
 
+# Ordering used by the "closeness to closing" sort: leads that are further
+# along the pipeline (but not yet won/lost) are surfaced first.
+ESTADO_CLOSENESS_RANK = {
+    "interesado": 0,
+    "contactado": 1,
+    "nuevo": 2,
+    "cliente": 3,
+    "descartado": 4,
+}
+
+# Maps a `sort` query value to a PostgREST `order` clause. "cercania" is
+# handled separately since it requires sorting by pipeline-stage proximity,
+# which PostgREST can't express directly.
+SORT_ORDERS = {
+    "recientes": "created_at.desc",
+    "score_desc": "score_ia.desc.nullslast",
+    "rubro": "rubro.asc.nullslast",
+    "empresa": "empresa.asc",
+}
+
+
 def _build_filters(
     empresa: Optional[str],
     rubro: Optional[str],
@@ -46,8 +67,10 @@ def _build_filters(
     score_min: Optional[float],
     score_max: Optional[float],
     tipo_cliente: Optional[str] = None,
+    sort: Optional[str] = None,
 ) -> dict:
-    params: dict = {"select": "*", "order": "created_at.desc"}
+    order = SORT_ORDERS.get(sort, SORT_ORDERS["recientes"])
+    params: dict = {"select": "*", "order": order}
     if empresa:
         params["empresa"] = f"ilike.%{empresa}%"
     if rubro:
@@ -92,20 +115,29 @@ def list_leads(
     score_min: Optional[float] = None,
     score_max: Optional[float] = None,
     tipo_cliente: Optional[str] = None,
+    sort: Optional[str] = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
     current_org: OrgContext = Depends(get_current_org),
 ):
-    params = _build_filters(empresa, rubro, provincia, ciudad, estado, con_email, con_telefono, score_min, score_max, tipo_cliente)
+    params = _build_filters(empresa, rubro, provincia, ciudad, estado, con_email, con_telefono, score_min, score_max, tipo_cliente, sort)
 
     # Count with same filters (excluding pagination params)
     count_filters = {k: v for k, v in params.items() if k not in ("select", "order")}
     total = current_org.db.count("leads", count_filters) if count_filters else current_org.db.count("leads")
 
-    params["limit"] = limit
-    params["offset"] = (page - 1) * limit
-
-    leads = current_org.db.raw_select("leads", params)
+    if sort == "cercania":
+        # PostgREST can't order by pipeline-stage proximity directly, so fetch
+        # the filtered set (capped) and sort/paginate in Python.
+        fetch_params = {**params, "limit": 5000, "offset": 0}
+        all_leads = current_org.db.raw_select("leads", fetch_params)
+        all_leads.sort(key=lambda l: ESTADO_CLOSENESS_RANK.get(l.get("estado") or "nuevo", 99))
+        start = (page - 1) * limit
+        leads = all_leads[start:start + limit]
+    else:
+        params["limit"] = limit
+        params["offset"] = (page - 1) * limit
+        leads = current_org.db.raw_select("leads", params)
 
     # Map score_ia → score for frontend
     for lead in leads:

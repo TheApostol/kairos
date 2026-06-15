@@ -84,6 +84,7 @@ export default function LeadsPage() {
   const [estado, setEstado] = useState('all')
   const [soloEmail, setSoloEmail] = useState(false)
   const [soloTelefono, setSoloTelefono] = useState(false)
+  const [sort, setSort] = useState('recientes')
 
   // Multi-select & contact
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -115,6 +116,7 @@ export default function LeadsPage() {
       if (estado && estado !== 'all') params.estado = estado
       if (soloEmail) params.con_email = true
       if (soloTelefono) params.con_telefono = true
+      if (sort && sort !== 'recientes') params.sort = sort
 
       const data: LeadsResponse = await getLeads(params)
       setLeads(data.items ?? [])
@@ -125,7 +127,7 @@ export default function LeadsPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, search, provincia, rubro, estado, soloEmail, soloTelefono])
+  }, [page, search, provincia, rubro, estado, soloEmail, soloTelefono, sort])
 
   useEffect(() => { fetchLeads() }, [fetchLeads])
 
@@ -136,10 +138,10 @@ export default function LeadsPage() {
     getLeadRubros().then((r) => setRubros(r.rubros ?? [])).catch(() => {})
   }, [])
 
-  useEffect(() => { setPage(1) }, [search, provincia, rubro, estado, soloEmail, soloTelefono])
+  useEffect(() => { setPage(1) }, [search, provincia, rubro, estado, soloEmail, soloTelefono, sort])
 
   // Reset selection when page/filters change
-  useEffect(() => { setSelectedIds(new Set()) }, [page, search, provincia, rubro, estado])
+  useEffect(() => { setSelectedIds(new Set()) }, [page, search, provincia, rubro, estado, sort])
 
   const toggleSelect = (id: number, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -362,6 +364,21 @@ export default function LeadsPage() {
                 <SelectItem value="descartado">Descartado</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 mt-3">
+            <div className="w-full sm:w-56">
+              <Select value={sort} onValueChange={setSort}>
+                <SelectTrigger><SelectValue placeholder="Ordenar por" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="recientes">Más recientes</SelectItem>
+                  <SelectItem value="score_desc">Mayor importancia (score)</SelectItem>
+                  <SelectItem value="cercania">Más cercanos al cierre</SelectItem>
+                  <SelectItem value="rubro">Rubro (A-Z)</SelectItem>
+                  <SelectItem value="empresa">Empresa (A-Z)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-4 mt-3">
