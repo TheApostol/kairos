@@ -533,7 +533,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
         total = len(all_leads)
         enriched_count = 0
 
-        scoped_db.update("scraper_jobs", job_id, {"total": total})
+        scoped_db.update("scraper_jobs", job_id, {"total": total, "total_found": total})
 
         for i, lead in enumerate(all_leads):
             website = lead.get("website", "") or ""
