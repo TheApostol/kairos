@@ -151,6 +151,29 @@ def _wa_phone(match: "re.Match") -> str:
     return match.group(1) or match.group(2) or ""
 
 
+def _normalize_phone(raw: str, keep_plus: bool = True) -> str:
+    """Strips formatting noise (spaces, dashes, dots, parens) from a scraped
+    phone number. Only adds a leading "+" when the input already carries a
+    "+" or an Argentina country code ("54..."); area codes in Argentina vary
+    from 2 to 4 digits, so this deliberately doesn't try to insert/strip a
+    "9" mobile marker or guess at area-code boundaries — getting that wrong
+    would corrupt a working number, which is worse than leaving it as
+    digit-cleaned but unprefixed. `keep_plus=False` matches the existing
+    `whatsapp` field convention of storing bare digits (no "+")."""
+    if not raw:
+        return raw
+    cleaned = re.sub(r"[^\d+]", "", raw)
+    if not cleaned:
+        return raw
+    has_plus = cleaned.startswith("+")
+    digits = cleaned.lstrip("+")
+    if not digits:
+        return raw
+    if keep_plus and (has_plus or digits.startswith("54")):
+        return "+" + digits
+    return digits
+
+
 def _extract_from_soup(soup, result: dict) -> None:
     """Extract contact info using BeautifulSoup from parsed HTML."""
 
@@ -191,6 +214,19 @@ def _extract_from_soup(soup, result: dict) -> None:
                         result["email"] = c
                 if not result["telefono"] and cp.get("telephone"):
                     result["telefono"] = str(cp["telephone"]).strip()
+                # address: PostalAddress schema (LocalBusiness/Organization)
+                addr = entry.get("address")
+                if isinstance(addr, list):
+                    addr = addr[0] if addr else {}
+                if isinstance(addr, dict):
+                    if not result.get("direccion") and addr.get("streetAddress"):
+                        result["direccion"] = str(addr["streetAddress"]).strip()
+                    if not result.get("ciudad") and addr.get("addressLocality"):
+                        result["ciudad"] = str(addr["addressLocality"]).strip()
+                    if not result.get("provincia") and addr.get("addressRegion"):
+                        result["provincia"] = str(addr["addressRegion"]).strip()
+                elif isinstance(addr, str) and not result.get("direccion"):
+                    result["direccion"] = addr.strip()
                 # sameAs: social profile links (Organization/LocalBusiness schema)
                 same_as = entry.get("sameAs")
                 if same_as:
@@ -412,7 +448,10 @@ def _scrape_website(url: str) -> dict:
     except ImportError:
         bs4_available = False
 
-    result = {"email": "", "instagram": "", "whatsapp": "", "telefono": ""}
+    result = {
+        "email": "", "instagram": "", "whatsapp": "", "telefono": "",
+        "direccion": "", "ciudad": "", "provincia": "",
+    }
     if not url or not url.startswith("http"):
         return result
 
@@ -529,6 +568,8 @@ def _scrape_website(url: str) -> dict:
     except Exception:
         pass
 
+    result["telefono"] = _normalize_phone(result["telefono"], keep_plus=True)
+    result["whatsapp"] = _normalize_phone(result["whatsapp"], keep_plus=False)
     return result
 
 
@@ -690,6 +731,7 @@ def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
         "instagram_found": 0,
         "whatsapp_found": 0,
         "telefono_found": 0,
+        "direccion_found": 0,
         "no_website": 0,
         "enriched": 0,
     }
@@ -714,7 +756,7 @@ def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
     enrich = _scrape_website(website)
     update_data = {}
 
-    for field in ["email", "instagram", "whatsapp", "telefono"]:
+    for field in ["email", "instagram", "whatsapp", "telefono", "direccion", "ciudad", "provincia"]:
         if enrich.get(field) and not lead.get(field):
             update_data[field] = enrich[field]
 
@@ -732,6 +774,8 @@ def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
         ]:
             if field in update_data:
                 stats[stat_key] += 1
+        if any(f in update_data for f in ("direccion", "ciudad", "provincia")):
+            stats["direccion_found"] += 1
 
     return stats
 
@@ -744,6 +788,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
         "instagram_found": 0,
         "whatsapp_found": 0,
         "telefono_found": 0,
+        "direccion_found": 0,
         "no_website": 0,
     }
     try:
@@ -761,7 +806,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             # need to go through this loop so the by-name DDG discovery
             # below gets a chance to find one.
             all_leads = scoped_db.raw_select("leads", {
-                "select": "id,empresa,website,email,telefono,instagram,whatsapp,ciudad,provincia",
+                "select": "id,empresa,website,email,telefono,instagram,whatsapp,ciudad,provincia,direccion",
                 "or": "(email.is.null,email.eq.)",
                 "order": "id.asc",
                 "limit": 5000,
