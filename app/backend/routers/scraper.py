@@ -423,6 +423,7 @@ def _run_scraper_job(
     total_found = 0
     new_found = 0
     num_sources = len(sources)
+    source_stats: dict = {s: {"found": 0, "new": 0, "status": "pending"} for s in sources}
 
     try:
         scoped_db.update("scraper_jobs", job_id, {
@@ -436,6 +437,7 @@ def _run_scraper_job(
             iter_fn = SOURCE_REGISTRY.get(source_id)
             if not iter_fn:
                 logger.warning("Unknown scraper source %r, skipping", source_id)
+                source_stats[source_id]["status"] = "unknown_source"
                 continue
 
             kwargs = {"tipo_cliente": tipo_cliente, **source_options.get(source_id, {})}
@@ -447,11 +449,14 @@ def _run_scraper_job(
             base_progress = int(100 * source_index / num_sources)
             next_progress = int(100 * (source_index + 1) / num_sources)
             records_in_source = 0
+            stat = source_stats[source_id]
+            stat["status"] = "running"
 
             try:
                 for record in iter_fn(**kwargs):
                     total_found += 1
                     records_in_source += 1
+                    stat["found"] += 1
                     record["score_ia"] = _score_lead(record)
 
                     try:
@@ -466,8 +471,10 @@ def _run_scraper_job(
                         if not existing:
                             scoped_db.insert("leads", record)
                             new_found += 1
+                            stat["new"] += 1
                     except Exception:
                         new_found += 1
+                        stat["new"] += 1
 
                     if total_found % 10 == 0:
                         progress = base_progress
@@ -477,21 +484,32 @@ def _run_scraper_job(
                             "progress": progress,
                             "new_found": new_found,
                             "total_found": total_found,
+                            "details": {"sources": source_stats},
                         })
             except NotImplementedError as exc:
                 logger.warning("Skipping source %r: %s", source_id, exc)
+                stat["status"] = "skipped"
+                stat["error"] = str(exc)
                 continue
-            except PlacesAPIError:
+            except PlacesAPIError as exc:
+                stat["status"] = "failed"
+                stat["error"] = str(exc)
+                scoped_db.update("scraper_jobs", job_id, {"details": {"sources": source_stats}})
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("Source %r failed, continuing with remaining sources", source_id)
+                stat["status"] = "failed"
+                stat["error"] = str(exc)
                 continue
+            else:
+                stat["status"] = "completed"
 
             progress = int(100 * (source_index + 1) / num_sources)
             scoped_db.update("scraper_jobs", job_id, {
                 "progress": progress,
                 "new_found": new_found,
                 "total_found": total_found,
+                "details": {"sources": source_stats},
             })
 
         scoped_db.update("scraper_jobs", job_id, {
@@ -500,6 +518,7 @@ def _run_scraper_job(
             "progress": 100,
             "new_found": new_found,
             "total_found": total_found,
+            "details": {"sources": source_stats},
         })
 
     except Exception as exc:
@@ -507,11 +526,20 @@ def _run_scraper_job(
             "status": "failed",
             "error_msg": str(exc),
             "completed_at": datetime.now(timezone.utc).isoformat(),
+            "details": {"sources": source_stats},
         })
 
 
 def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str = None):
     scoped_db = ScopedSupabaseClient(db, org_id)
+    field_stats = {
+        "websites_discovered": 0,
+        "emails_found": 0,
+        "instagram_found": 0,
+        "whatsapp_found": 0,
+        "telefono_found": 0,
+        "no_website": 0,
+    }
     try:
         scoped_db.update("scraper_jobs", job_id, {
             "status": "running",
@@ -547,8 +575,10 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
                 )
                 if website:
                     scoped_db.update("leads", lead["id"], {"website": website})
+                    field_stats["websites_discovered"] += 1
 
             if not website:
+                field_stats["no_website"] += 1
                 continue
 
             enrich = _scrape_website(website)
@@ -564,6 +594,14 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
                 update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
                 scoped_db.update("leads", lead["id"], update_data)
                 enriched_count += 1
+                if "email" in update_data:
+                    field_stats["emails_found"] += 1
+                if "instagram" in update_data:
+                    field_stats["instagram_found"] += 1
+                if "whatsapp" in update_data:
+                    field_stats["whatsapp_found"] += 1
+                if "telefono" in update_data:
+                    field_stats["telefono_found"] += 1
 
             del enrich, update_data
 
@@ -576,6 +614,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             scoped_db.update("scraper_jobs", job_id, {
                 "progress": progress,
                 "new_found": enriched_count,
+                "details": field_stats,
             })
 
         del all_leads
@@ -587,6 +626,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             "progress": 100,
             "new_found": enriched_count,
             "total_found": total,
+            "details": field_stats,
         })
 
     except Exception as exc:
@@ -594,6 +634,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             "status": "failed",
             "error_msg": str(exc),
             "completed_at": datetime.now(timezone.utc).isoformat(),
+            "details": field_stats,
         })
 
 
@@ -753,6 +794,7 @@ def get_history(current_org: OrgContext = Depends(get_current_org)):
             "total": job.get("total", 0),
             "tipo": "enrichment" if job.get("queries") == ["enrichment"] else "scraper",
             "sources": job.get("sources"),
+            "details": job.get("details"),
         }
         for job in jobs
     ]
@@ -801,6 +843,8 @@ async def stream_latest_progress(current_org: OrgContext = Depends(get_current_o
             }
             if status == "failed":
                 payload["error"] = job.get("error_msg", "Error desconocido")
+            if status in ("completed", "failed"):
+                payload["details"] = job.get("details")
 
             yield f"data: {json.dumps(payload)}\n\n"
 
