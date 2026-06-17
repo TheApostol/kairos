@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import json
+import unicodedata
 from datetime import datetime, timezone
 from typing import Optional, List
 from urllib.parse import urljoin, urlparse
@@ -34,6 +35,26 @@ class ScraperStartRequest(BaseModel):
 
 class EnrichRequest(BaseModel):
     lead_ids: Optional[List[str]] = None  # if None, enrich all without email
+
+
+_BUSINESS_SUFFIX_REGEX = re.compile(
+    r"\b(s\.?a\.?s?\.?|s\.?r\.?l\.?|s\.?h\.?|sociedad an[oó]nima|sociedad de responsabilidad limitada)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_empresa(name: str) -> str:
+    """Folds a business name down to a comparable key: strips accents/case,
+    common legal suffixes (S.A., S.R.L., ...), and punctuation/whitespace
+    differences — so e.g. "Dietética La Salud S.A." and "DIETETICA LA SALUD"
+    are recognized as the same lead across sources/spellings."""
+    if not name:
+        return ""
+    n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    n = n.lower()
+    n = _BUSINESS_SUFFIX_REGEX.sub(" ", n)
+    n = re.sub(r"[^a-z0-9]+", " ", n).strip()
+    return n
 
 
 def _score_lead(record: dict) -> int:
@@ -546,6 +567,20 @@ def _run_scraper_job(
             "progress": 0,
         })
 
+        # Pre-load existing leads for this tipo_cliente once, normalized, so
+        # dedup works both against history and across sources within this
+        # same job (e.g. green_life and overpass finding the same shop under
+        # slightly different name spellings) — and so a record is never
+        # silently dropped just because a per-record DB lookup failed.
+        existing_leads = scoped_db.select_all(
+            "leads",
+            filters={"tipo_cliente": f"eq.{tipo_cliente}"},
+            select_cols="empresa",
+        )
+        seen_empresas = {_normalize_empresa(lead.get("empresa", "")) for lead in existing_leads}
+        seen_empresas.discard("")
+        del existing_leads
+
         for source_index, source_id in enumerate(sources):
             iter_fn = SOURCE_REGISTRY.get(source_id)
             if not iter_fn:
@@ -572,22 +607,21 @@ def _run_scraper_job(
                     stat["found"] += 1
                     record["score_ia"] = _score_lead(record)
 
+                    key = _normalize_empresa(record.get("empresa", ""))
+                    if key and key in seen_empresas:
+                        continue  # duplicate — already in DB or already inserted earlier in this job
+
                     try:
-                        existing = scoped_db.select(
-                            "leads",
-                            filters={
-                                "empresa": f"eq.{record['empresa']}",
-                                "tipo_cliente": f"eq.{tipo_cliente}",
-                            },
-                            limit=1,
-                        )
-                        if not existing:
-                            scoped_db.insert("leads", record)
-                            new_found += 1
-                            stat["new"] += 1
-                    except Exception:
+                        scoped_db.insert("leads", record)
                         new_found += 1
                         stat["new"] += 1
+                        if key:
+                            seen_empresas.add(key)
+                    except Exception:
+                        logger.warning(
+                            "Failed to insert lead %r from source %r",
+                            record.get("empresa"), source_id, exc_info=True,
+                        )
 
                     if total_found % 10 == 0:
                         progress = base_progress

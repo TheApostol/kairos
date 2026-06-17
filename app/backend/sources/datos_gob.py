@@ -100,9 +100,7 @@ def _iter_zip_csv_rows(resource_url: str) -> Iterator[dict]:
     (`use_full_dataset=True`) rather than the default.
     """
     with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
-        with fetch_with_retries(
-            resource_url, rate_limiter=_rate_limiter, timeout=300
-        ) and httpx_stream_to_file(resource_url, tmp.name):
+        with httpx_stream_to_file(resource_url, tmp.name):
             pass
 
         with zipfile.ZipFile(tmp.name) as zf:
