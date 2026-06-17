@@ -113,8 +113,8 @@ export default function MayoristasPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Mayoristas</h1>
-          <p className="text-slate-500 mt-1">Distribuidores y clientes mayoristas — {total} registros</p>
+          <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Mayoristas</h1>
+          <p className="mt-1" style={{ color: '#6B4F3A' }}>Distribuidores y clientes mayoristas — {total} registros</p>
         </div>
         <Button
           onClick={handleScrape}

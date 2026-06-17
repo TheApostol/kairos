@@ -127,8 +127,8 @@ export default function NewCampaignPage() {
     return (
       <div className="max-w-lg mx-auto mt-16 text-center space-y-4">
         <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto" />
-        <h2 className="text-2xl font-bold text-slate-900">Campaña enviada</h2>
-        <p className="text-slate-500">Tu campaña fue creada y enviada exitosamente.</p>
+        <h2 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Campaña enviada</h2>
+        <p style={{ color: '#6B4F3A' }}>Tu campaña fue creada y enviada exitosamente.</p>
         <div className="flex gap-3 justify-center">
           <Button variant="outline" onClick={() => router.push('/campaigns')}>
             Ver Campañas
@@ -156,8 +156,8 @@ export default function NewCampaignPage() {
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Nueva Campaña</h1>
-          <p className="text-slate-500 mt-0.5">Crea y envía una campaña a tus leads</p>
+          <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Nueva Campaña</h1>
+          <p className="mt-0.5" style={{ color: '#6B4F3A' }}>Crea y envía una campaña a tus leads</p>
         </div>
       </div>
 

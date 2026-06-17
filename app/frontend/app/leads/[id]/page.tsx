@@ -233,7 +233,7 @@ export default function LeadDetailPage() {
         </Button>
         <div className="flex-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-slate-900">{lead.empresa}</h1>
+            <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>{lead.empresa}</h1>
             <EstadoBadge estado={lead.estado} />
             <ScoreBadge score={lead.score} />
           </div>

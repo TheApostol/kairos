@@ -161,7 +161,7 @@ export default function CampaignDetailPage() {
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">{campaign.nombre}</h1>
+          <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>{campaign.nombre}</h1>
           <div className="flex items-center gap-2 mt-1">
             <Badge variant={campaign.tipo === 'email' ? 'info' : 'success'} className="capitalize">
               {campaign.tipo}
