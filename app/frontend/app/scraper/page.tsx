@@ -232,7 +232,10 @@ export default function ScraperPage() {
         setScraperState((prev) => prev === 'running' ? 'idle' : prev)
         setEnrichState((prev) => prev === 'running' ? 'idle' : prev)
       }
-    } catch {}
+      return jobs
+    } catch {
+      return [] as ScraperJob[]
+    }
     finally { setRefreshing(false) }
   }
 
@@ -280,7 +283,8 @@ export default function ScraperPage() {
 
     try {
       const res = await runScraper({ sources: sourcesToUse })
-      if (res?.job_id) setScraperJobId(String(res.job_id))
+      const startedJobId = res?.job_id ? String(res.job_id) : null
+      if (startedJobId) setScraperJobId(startedJobId)
 
       const es = new EventSource(await getEventSourceUrl('/scraper/progress'))
       eventSourceRef.current = es
@@ -321,8 +325,22 @@ export default function ScraperPage() {
 
       es.onerror = () => {
         es.close()
-        setScraperState((prev) => prev === 'running' ? 'done' : prev)
-        fetchHistory()
+        // The SSE stream dropped (e.g. a backend restart) — check the job's
+        // actual outcome instead of assuming it finished successfully.
+        fetchHistory().then((jobs) => {
+          const job = startedJobId ? jobs.find((j) => String(j.id) === startedJobId) : undefined
+          if (job?.estado === 'error') {
+            setScraperState('error')
+            setScraperError(job.error ?? 'La conexión se interrumpió.')
+            setLogLines((prev) => [...prev, `ERROR: ${job.error ?? 'Conexión interrumpida'}`])
+            if (job.details?.sources) setScraperReport(job.details.sources)
+          } else if (job?.estado === 'completado') {
+            setScraperState('done')
+            if (job.details?.sources) setScraperReport(job.details.sources)
+          } else {
+            setScraperState((prev) => prev === 'running' ? 'idle' : prev)
+          }
+        })
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
