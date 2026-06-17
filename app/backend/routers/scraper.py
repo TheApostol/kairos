@@ -603,9 +603,12 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             ids_str = ",".join(lead_ids)
             all_leads = scoped_db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
         else:
+            # No "website" filter here: leads with no website on file (the
+            # common case for green_life/overpass/datos_gob sources) still
+            # need to go through this loop so the by-name DDG discovery
+            # below (line ~622) gets a chance to find one.
             all_leads = scoped_db.raw_select("leads", {
                 "select": "id,empresa,website,email,telefono,instagram,whatsapp,ciudad,provincia",
-                "website": "neq.",
                 "or": "(email.is.null,email.eq.)",
                 "order": "id.asc",
                 "limit": 5000,
