@@ -321,8 +321,8 @@ export default function CatalogPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Catálogo</h1>
-          <p className="text-slate-500 mt-1">
+          <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Catálogo</h1>
+          <p className="mt-1" style={{ color: '#6B4F3A' }}>
             {totalCount > 0 ? `${totalCount.toLocaleString('es-AR')} productos` : 'Sin productos'}
           </p>
         </div>

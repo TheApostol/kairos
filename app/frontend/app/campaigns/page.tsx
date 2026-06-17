@@ -168,8 +168,8 @@ export default function CampaignsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Campañas</h1>
-          <p className="text-slate-500 mt-1">Gestión de campañas de email y WhatsApp</p>
+          <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Campañas</h1>
+          <p className="mt-1" style={{ color: '#6B4F3A' }}>Gestión de campañas de email y WhatsApp</p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -195,12 +195,12 @@ export default function CampaignsPage() {
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map(({ title, value, icon: Icon, color, bg }) => (
-          <Card key={title}>
+          <Card key={title} className="hover:shadow-md transition-shadow">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-slate-500 font-medium">{title}</p>
-                  <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
+                  <p className="text-sm font-medium" style={{ color: '#6B4F3A' }}>{title}</p>
+                  <p className="text-2xl font-bold mt-1" style={{ color: '#4A3728' }}>{value}</p>
                 </div>
                 <div className={`${bg} p-3 rounded-lg`}>
                   <Icon className={`w-6 h-6 ${color}`} />

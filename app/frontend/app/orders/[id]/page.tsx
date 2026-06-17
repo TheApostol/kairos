@@ -202,10 +202,10 @@ export default function OrderDetailPage() {
         </Button>
         <div className="flex-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-slate-900">Orden #{order.numero}</h1>
+            <h1 className="text-2xl font-bold" style={{ color: '#4A3728' }}>Orden #{order.numero}</h1>
             <Badge variant="secondary" className="capitalize">{ESTADO_LABELS[order.estado] ?? order.estado}</Badge>
           </div>
-          <p className="text-slate-500 mt-1">{order.empresa || `Lead #${order.lead_id}`}</p>
+          <p className="mt-1" style={{ color: '#6B4F3A' }}>{order.empresa || `Lead #${order.lead_id}`}</p>
         </div>
         <div className="flex gap-2">
           <Button
