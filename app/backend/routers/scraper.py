@@ -66,7 +66,11 @@ def _score_lead(record: dict) -> int:
 
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 INSTAGRAM_REGEX = re.compile(r"instagram\.com/([A-Za-z0-9._]{1,30})")
-WA_REGEX = re.compile(r"(?:wa\.me|whatsapp\.com/send\?phone=)[/\?]?(\d{6,15})")
+# Matches wa.me/<phone> links and any whatsapp.com/send(...)?phone=<phone> variant
+# (covers api.whatsapp.com, extra query params like text= before phone=, etc.)
+WA_REGEX = re.compile(
+    r"wa\.me/\+?(\d{6,15})|whatsapp\.com/send[^\"'>]*?phone=\+?(\d{6,15})", re.IGNORECASE
+)
 # Broad Argentina phone pattern: captures 8-15 digit sequences from tel: links and text
 TEL_HREF_REGEX = re.compile(r'href=["\']tel:([+\d\s\-().]{6,20})["\']', re.IGNORECASE)
 # Phone pattern in plain text: handles formats like (011) 4567-8901, 011-15-1234-5678, +54 9 11 etc.
@@ -112,6 +116,11 @@ def _decode_cloudflare_email(encoded: str) -> str:
         return ""
 
 
+def _wa_phone(match: "re.Match") -> str:
+    """WA_REGEX has two alternative capture groups (wa.me vs whatsapp.com/send) — pick whichever matched."""
+    return match.group(1) or match.group(2) or ""
+
+
 def _extract_from_soup(soup, result: dict) -> None:
     """Extract contact info using BeautifulSoup from parsed HTML."""
 
@@ -152,6 +161,25 @@ def _extract_from_soup(soup, result: dict) -> None:
                         result["email"] = c
                 if not result["telefono"] and cp.get("telephone"):
                     result["telefono"] = str(cp["telephone"]).strip()
+                # sameAs: social profile links (Organization/LocalBusiness schema)
+                same_as = entry.get("sameAs")
+                if same_as:
+                    if isinstance(same_as, str):
+                        same_as = [same_as]
+                    for link in same_as if isinstance(same_as, list) else []:
+                        link = str(link)
+                        if not result["instagram"] and "instagram.com" in link:
+                            ig = INSTAGRAM_REGEX.search(link)
+                            if ig and ig.group(1) not in ("p", "reel", "stories", "explore", "accounts"):
+                                result["instagram"] = f"@{ig.group(1)}"
+                        if not result["whatsapp"] and ("wa.me" in link or "whatsapp.com" in link):
+                            wa = WA_REGEX.search(link)
+                            if wa:
+                                phone = _wa_phone(wa)
+                                if phone:
+                                    result["whatsapp"] = phone
+                                    if not result["telefono"]:
+                                        result["telefono"] = "+" + phone
         except Exception:
             pass
 
@@ -215,9 +243,11 @@ def _extract_from_soup(soup, result: dict) -> None:
         if ("wa.me" in href or "whatsapp.com" in href) and not result["whatsapp"]:
             wa = WA_REGEX.search(href)
             if wa:
-                result["whatsapp"] = wa.group(1)
-                if not result["telefono"]:
-                    result["telefono"] = "+" + wa.group(1)
+                phone = _wa_phone(wa)
+                if phone:
+                    result["whatsapp"] = phone
+                    if not result["telefono"]:
+                        result["telefono"] = "+" + phone
 
     # 5. Priority zones: footer / contact sections
     if not result["email"] or not result["telefono"]:
@@ -260,15 +290,23 @@ def _extract_from_soup(soup, result: dict) -> None:
             if result["email"] and result["telefono"]:
                 break
 
-    # 5b. Phone-prefix label scan: "Tel:", "Cel:", "WhatsApp:" in plain elements
-    if not result["telefono"]:
+    # 5b. Phone-prefix label scan: "Tel:", "Cel:", "WhatsApp:" in plain elements.
+    # A "WhatsApp:" label also feeds result["whatsapp"], not just telefono.
+    if not result["telefono"] or not result["whatsapp"]:
         for el in soup.find_all(['p', 'li', 'span', 'div']):
             txt = el.get_text(" ", strip=True)
-            if re.search(r'\b(tel[eé]?[f.]?|cel(ular)?|whatsapp|fax)\s*[:\-]', txt, re.I):
-                m = PHONE_TEXT_REGEX.search(txt)
-                if m and len(re.sub(r'\D', '', m.group())) >= 8:
-                    result["telefono"] = m.group().strip()
-                    break
+            label_m = re.search(r'\b(tel[eé]?[f.]?|cel(ular)?|whatsapp|fax)\s*[:\-]', txt, re.I)
+            if not label_m:
+                continue
+            m = PHONE_TEXT_REGEX.search(txt)
+            if not m or len(re.sub(r'\D', '', m.group())) < 8:
+                continue
+            if not result["telefono"]:
+                result["telefono"] = m.group().strip()
+            if "whatsapp" in label_m.group(1).lower() and not result["whatsapp"]:
+                result["whatsapp"] = re.sub(r'\D', '', m.group())
+            if result["telefono"] and result["whatsapp"]:
+                break
 
     # 6. FULL page text scan — last resort, catches plain-text emails in any element
     if not result["email"]:
@@ -282,8 +320,9 @@ def _extract_from_soup(soup, result: dict) -> None:
             result["email"] = valid[0]
 
     # 7. Phone: scan tel: hrefs then full-text PHONE_TEXT_REGEX
+    full_html = str(soup)
     if not result["telefono"]:
-        tel_matches = TEL_HREF_REGEX.findall(str(soup))
+        tel_matches = TEL_HREF_REGEX.findall(full_html)
         if tel_matches:
             result["telefono"] = tel_matches[0].strip()
 
@@ -291,6 +330,18 @@ def _extract_from_soup(soup, result: dict) -> None:
         phone_m = PHONE_TEXT_REGEX.search(soup.get_text(" "))
         if phone_m and len(re.sub(r'\D', '', phone_m.group())) >= 8:
             result["telefono"] = phone_m.group().strip()
+
+    # 7b. WhatsApp fallback: scan raw HTML (covers click-to-chat widgets wired
+    # via onclick/data- attributes rather than a real <a href>) for wa.me /
+    # whatsapp.com links missed by the <a href> pass above.
+    if not result["whatsapp"]:
+        wa = WA_REGEX.search(full_html)
+        if wa:
+            phone = _wa_phone(wa)
+            if phone:
+                result["whatsapp"] = phone
+                if not result["telefono"]:
+                    result["telefono"] = "+" + phone
 
 
 def _scrape_website(url: str) -> dict:
