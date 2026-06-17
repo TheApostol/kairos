@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Zap, ChevronDown, ChevronUp } from 'lucide-react'
+import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Zap, ChevronDown, ChevronUp, RotateCw } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -124,6 +124,11 @@ function EnrichmentReportGrid({ details }: { details: EnrichmentDetails }) {
   )
 }
 
+function isInterruptedError(msg?: string) {
+  if (!msg) return false
+  return /interrupted|restart/i.test(msg)
+}
+
 function formatDate(dateStr?: string) {
   if (!dateStr) return '—'
   try {
@@ -178,6 +183,7 @@ export default function ScraperPage() {
   const [enrichJobId, setEnrichJobId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cancellingId, setCancellingId] = useState<number | null>(null)
+  const [retryingId, setRetryingId] = useState<number | null>(null)
   const [expandedJobId, setExpandedJobId] = useState<number | null>(null)
   const autoCombinedRef = useRef(false)
 
@@ -196,6 +202,20 @@ export default function ScraperPage() {
       setEnrichState((prev) => prev === 'running' ? 'idle' : prev)
     } catch {}
     finally { setCancellingId(null) }
+  }
+
+  const retryJob = async (job: ScraperJob) => {
+    if (anyJobRunning) return
+    setRetryingId(job.id)
+    try {
+      if (job.tipo === 'enrichment') {
+        await startEnrichment()
+      } else {
+        await startScraper(job.sources?.length ? job.sources : undefined)
+      }
+    } finally {
+      setRetryingId(null)
+    }
   }
 
   const fetchHistory = async () => {
@@ -248,7 +268,8 @@ export default function ScraperPage() {
     await startScraper()
   }
 
-  const startScraper = async () => {
+  const startScraper = async (sourcesOverride?: string[]) => {
+    const sourcesToUse = sourcesOverride ?? selectedSources
     setScraperState('running')
     setScraperError('')
     setScraperJobId(null)
@@ -258,7 +279,7 @@ export default function ScraperPage() {
     setScraperReport(null)
 
     try {
-      const res = await runScraper({ sources: selectedSources })
+      const res = await runScraper({ sources: sourcesToUse })
       if (res?.job_id) setScraperJobId(String(res.job_id))
 
       const es = new EventSource(await getEventSourceUrl('/scraper/progress'))
@@ -439,7 +460,7 @@ export default function ScraperPage() {
                 </div>
               )}
               <Button
-                onClick={startScraper}
+                onClick={() => startScraper()}
                 disabled={anyJobRunning || selectedSources.length === 0}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
                 size="lg"
@@ -723,7 +744,16 @@ export default function ScraperPage() {
                         </TableCell>
                         <TableCell className="text-slate-600 text-sm">{formatDate(job.started_at)}</TableCell>
                         <TableCell className="text-slate-600 text-sm">{formatDate(job.finished_at)}</TableCell>
-                        <TableCell><JobStatusBadge estado={job.estado} /></TableCell>
+                        <TableCell>
+                          <JobStatusBadge estado={job.estado} />
+                          {job.estado === 'error' && job.error && (
+                            <p className="text-[11px] text-slate-400 mt-1 max-w-[160px]" title={job.error}>
+                              {isInterruptedError(job.error)
+                                ? 'Interrumpido por un reinicio del servidor — los leads ya encontrados se guardaron.'
+                                : job.error}
+                            </p>
+                          )}
+                        </TableCell>
                         <TableCell>
                           {job.estado === 'corriendo' || job.estado === 'pendiente' ? (
                             <div className="flex items-center gap-2">
@@ -754,6 +784,20 @@ export default function ScraperPage() {
                                 {cancellingId === job.id
                                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                   : <StopCircle className="w-3.5 h-3.5" />}
+                              </Button>
+                            )}
+                            {job.estado === 'error' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => retryJob(job)}
+                                disabled={anyJobRunning || retryingId === job.id}
+                                className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 h-7 px-2"
+                                title="Reintentar con las mismas fuentes"
+                              >
+                                {retryingId === job.id
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <RotateCw className="w-3.5 h-3.5" />}
                               </Button>
                             )}
                             {job.details && Object.keys(job.details).length > 0 && (
