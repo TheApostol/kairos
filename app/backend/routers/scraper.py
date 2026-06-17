@@ -1,9 +1,10 @@
 import asyncio
+import concurrent.futures
 import gc
 import logging
 import re
-import time
 import json
+import threading
 import unicodedata
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -677,6 +678,64 @@ def _run_scraper_job(
         })
 
 
+def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
+    """Discovers a website (if missing) and scrapes it for contact fields,
+    writing any updates straight to `lead`'s row. Returns a stats delta
+    dict (same keys as `_run_enrichment_job`'s `field_stats`, plus
+    `enriched`) for the caller to aggregate — kept side-effect-free on
+    shared state so it's safe to run from a thread pool."""
+    stats = {
+        "websites_discovered": 0,
+        "emails_found": 0,
+        "instagram_found": 0,
+        "whatsapp_found": 0,
+        "telefono_found": 0,
+        "no_website": 0,
+        "enriched": 0,
+    }
+
+    website = lead.get("website", "") or ""
+
+    # If no website on file, try to discover it for free via DuckDuckGo
+    if not website and lead.get("empresa"):
+        website = _discover_website(
+            lead.get("empresa", ""),
+            lead.get("ciudad", ""),
+            lead.get("provincia", ""),
+        )
+        if website:
+            scoped_db.update("leads", lead["id"], {"website": website})
+            stats["websites_discovered"] += 1
+
+    if not website:
+        stats["no_website"] += 1
+        return stats
+
+    enrich = _scrape_website(website)
+    update_data = {}
+
+    for field in ["email", "instagram", "whatsapp", "telefono"]:
+        if enrich.get(field) and not lead.get(field):
+            update_data[field] = enrich[field]
+
+    if update_data:
+        merged = {**lead, **update_data}
+        update_data["score_ia"] = _score_lead(merged)
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        scoped_db.update("leads", lead["id"], update_data)
+        stats["enriched"] += 1
+        for field, stat_key in [
+            ("email", "emails_found"),
+            ("instagram", "instagram_found"),
+            ("whatsapp", "whatsapp_found"),
+            ("telefono", "telefono_found"),
+        ]:
+            if field in update_data:
+                stats[stat_key] += 1
+
+    return stats
+
+
 def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str = None):
     scoped_db = ScopedSupabaseClient(db, org_id)
     field_stats = {
@@ -700,7 +759,7 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             # No "website" filter here: leads with no website on file (the
             # common case for green_life/overpass/datos_gob sources) still
             # need to go through this loop so the by-name DDG discovery
-            # below (line ~622) gets a chance to find one.
+            # below gets a chance to find one.
             all_leads = scoped_db.raw_select("leads", {
                 "select": "id,empresa,website,email,telefono,instagram,whatsapp,ciudad,provincia",
                 "or": "(email.is.null,email.eq.)",
@@ -710,62 +769,43 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
 
         total = len(all_leads)
         enriched_count = 0
+        completed = 0
+        progress_lock = threading.Lock()
 
         scoped_db.update("scraper_jobs", job_id, {"total": total, "total_found": total})
 
-        for i, lead in enumerate(all_leads):
-            website = lead.get("website", "") or ""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(_enrich_one_lead, scoped_db, lead): lead for lead in all_leads}
 
-            # If no website on file, try to discover it for free via DuckDuckGo
-            if not website and lead.get("empresa"):
-                website = _discover_website(
-                    lead.get("empresa", ""),
-                    lead.get("ciudad", ""),
-                    lead.get("provincia", ""),
-                )
-                if website:
-                    scoped_db.update("leads", lead["id"], {"website": website})
-                    field_stats["websites_discovered"] += 1
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                lead = futures[future]
+                try:
+                    delta = future.result()
+                except Exception:
+                    logger.warning("Failed to enrich lead %r", lead.get("empresa"), exc_info=True)
+                    delta = None
 
-            if not website:
-                field_stats["no_website"] += 1
-                continue
+                with progress_lock:
+                    completed += 1
+                    if delta:
+                        enriched_count += delta.pop("enriched", 0)
+                        for key, value in delta.items():
+                            field_stats[key] += value
 
-            enrich = _scrape_website(website)
-            update_data = {}
+                    # Run GC periodically to reclaim BS4 / httpx memory
+                    if completed % 25 == 0:
+                        gc.collect()
 
-            for field in ["email", "instagram", "whatsapp", "telefono"]:
-                if enrich.get(field) and not lead.get(field):
-                    update_data[field] = enrich[field]
-
-            if update_data:
-                merged = {**lead, **update_data}
-                update_data["score_ia"] = _score_lead(merged)
-                update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-                scoped_db.update("leads", lead["id"], update_data)
-                enriched_count += 1
-                for field, stat_key in [
-                    ("email", "emails_found"),
-                    ("instagram", "instagram_found"),
-                    ("whatsapp", "whatsapp_found"),
-                    ("telefono", "telefono_found"),
-                ]:
-                    if field in update_data:
-                        field_stats[stat_key] += 1
-
-            del enrich, update_data
-
-            # Run GC every 25 leads to reclaim BS4 / httpx memory
-            if (i + 1) % 25 == 0:
-                gc.collect()
-
-            time.sleep(0.5)
-            progress = int(((i + 1) / max(total, 1)) * 100)
-            scoped_db.update("scraper_jobs", job_id, {
-                "progress": progress,
-                "new_found": enriched_count,
-                "details": field_stats,
-            })
+                    # Update progress every few completions rather than on
+                    # every single one, to avoid a DB write storm from 5
+                    # concurrent workers finishing in quick succession.
+                    if completed % 5 == 0 or completed == total:
+                        progress = int((completed / max(total, 1)) * 100)
+                        scoped_db.update("scraper_jobs", job_id, {
+                            "progress": progress,
+                            "new_found": enriched_count,
+                            "details": field_stats,
+                        })
 
         del all_leads
         gc.collect()
