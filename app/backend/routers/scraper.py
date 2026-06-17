@@ -428,9 +428,11 @@ def _scrape_website(url: str) -> dict:
                             if ig_m:
                                 result["instagram"] = f"@{ig_m[0]}"
                         if not result["whatsapp"]:
-                            wa_m = WA_REGEX.findall(text)
+                            wa_m = WA_REGEX.search(text)
                             if wa_m:
-                                result["whatsapp"] = wa_m[0]
+                                phone = _wa_phone(wa_m)
+                                if phone:
+                                    result["whatsapp"] = phone
                         if not result["telefono"]:
                             tel_m = TEL_HREF_REGEX.findall(text)
                             if tel_m:
