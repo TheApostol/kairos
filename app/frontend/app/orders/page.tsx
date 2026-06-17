@@ -162,7 +162,7 @@ function OrdersContent() {
 
       {loading ? (
         <div className="flex items-center justify-center h-48">
-          <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+          <Loader2 className="w-6 h-6 animate-spin" style={{ color: '#C9A040' }} />
         </div>
       ) : (
         /* Kanban Board */
@@ -302,7 +302,7 @@ function OrdersContent() {
 
 export default function OrdersPage() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>}>
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin" style={{ color: '#C9A040' }} /></div>}>
       <OrdersContent />
     </Suspense>
   )
