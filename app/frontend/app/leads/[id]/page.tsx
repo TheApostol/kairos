@@ -208,7 +208,7 @@ export default function LeadDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+        <Loader2 className="w-8 h-8 animate-spin" style={{ color: '#C9A040' }} />
       </div>
     )
   }

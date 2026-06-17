@@ -173,7 +173,7 @@ export default function MayoristasPage() {
         <CardContent className="p-0">
           {loading ? (
             <div className="flex items-center justify-center h-48">
-              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+              <Loader2 className="w-6 h-6 animate-spin" style={{ color: '#C9A040' }} />
             </div>
           ) : mayoristas.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48 text-slate-400 gap-3">
