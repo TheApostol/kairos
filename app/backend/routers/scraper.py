@@ -594,14 +594,14 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
                 update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
                 scoped_db.update("leads", lead["id"], update_data)
                 enriched_count += 1
-                if "email" in update_data:
-                    field_stats["emails_found"] += 1
-                if "instagram" in update_data:
-                    field_stats["instagram_found"] += 1
-                if "whatsapp" in update_data:
-                    field_stats["whatsapp_found"] += 1
-                if "telefono" in update_data:
-                    field_stats["telefono_found"] += 1
+                for field, stat_key in [
+                    ("email", "emails_found"),
+                    ("instagram", "instagram_found"),
+                    ("whatsapp", "whatsapp_found"),
+                    ("telefono", "telefono_found"),
+                ]:
+                    if field in update_data:
+                        field_stats[stat_key] += 1
 
             del enrich, update_data
 
