@@ -52,10 +52,13 @@ CREATE TABLE IF NOT EXISTS scraper_jobs (
   total        integer DEFAULT 0,
   output_file  text,
   error_msg    text,
+  details      jsonb DEFAULT '{}'::jsonb,
   started_at   timestamptz,
   completed_at timestamptz,
   created_at   timestamptz DEFAULT now()
 );
+
+ALTER TABLE scraper_jobs ADD COLUMN IF NOT EXISTS details jsonb DEFAULT '{}'::jsonb;
 
 -- PRODUCTS / CATALOG
 CREATE TABLE IF NOT EXISTS products (

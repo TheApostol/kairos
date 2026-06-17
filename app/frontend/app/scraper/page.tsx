@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { Fragment, useEffect, useState, useRef } from 'react'
 import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, getEventSourceUrl, SCRAPER_SOURCES, DEFAULT_SCRAPER_SOURCES } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,9 +14,29 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Zap } from 'lucide-react'
+import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Zap, ChevronDown, ChevronUp } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
+
+interface SourceStat {
+  found: number
+  new: number
+  status: string
+  error?: string
+}
+
+interface ScraperDetails {
+  sources?: Record<string, SourceStat>
+}
+
+interface EnrichmentDetails {
+  websites_discovered?: number
+  emails_found?: number
+  instagram_found?: number
+  whatsapp_found?: number
+  telefono_found?: number
+  no_website?: number
+}
 
 interface ScraperJob {
   id: number
@@ -30,9 +50,79 @@ interface ScraperJob {
   total?: number
   tipo?: 'scraper' | 'enrichment'
   sources?: string[]
+  details?: ScraperDetails & EnrichmentDetails
 }
 
 type RunState = 'idle' | 'running' | 'done' | 'error'
+
+const SOURCE_LABELS: Record<string, string> = Object.fromEntries(
+  SCRAPER_SOURCES.map((s) => [s.id, s.label])
+)
+
+const SOURCE_STATUS_LABELS: Record<string, string> = {
+  completed: 'Completado',
+  skipped: 'Omitida',
+  failed: 'Falló',
+  running: 'Corriendo',
+  pending: 'Pendiente',
+  unknown_source: 'Desconocida',
+}
+
+function ScraperReportTable({ sources }: { sources: Record<string, SourceStat> }) {
+  return (
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Fuente</TableHead>
+            <TableHead>Encontrados</TableHead>
+            <TableHead>Nuevos</TableHead>
+            <TableHead>Estado</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {Object.entries(sources).map(([id, stat]) => (
+            <TableRow key={id}>
+              <TableCell className="text-sm font-medium text-slate-700">{SOURCE_LABELS[id] ?? id}</TableCell>
+              <TableCell className="text-sm">{stat.found}</TableCell>
+              <TableCell className="text-sm text-emerald-700 font-semibold">+{stat.new}</TableCell>
+              <TableCell>
+                <Badge
+                  variant={stat.status === 'completed' ? 'success' : stat.status === 'failed' ? 'danger' : stat.status === 'skipped' ? 'warning' : 'secondary'}
+                  className="text-[10px]"
+                  title={stat.error}
+                >
+                  {SOURCE_STATUS_LABELS[stat.status] ?? stat.status}
+                </Badge>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+function EnrichmentReportGrid({ details }: { details: EnrichmentDetails }) {
+  const cards = [
+    { label: 'Emails encontrados', value: details.emails_found ?? 0, color: 'text-emerald-700 bg-emerald-50' },
+    { label: 'Teléfonos encontrados', value: details.telefono_found ?? 0, color: 'text-blue-700 bg-blue-50' },
+    { label: 'Instagram encontrado', value: details.instagram_found ?? 0, color: 'text-violet-700 bg-violet-50' },
+    { label: 'WhatsApp encontrado', value: details.whatsapp_found ?? 0, color: 'text-green-700 bg-green-50' },
+    { label: 'Sitios web descubiertos', value: details.websites_discovered ?? 0, color: 'text-amber-700 bg-amber-50' },
+    { label: 'Sin sitio web', value: details.no_website ?? 0, color: 'text-slate-600 bg-slate-50' },
+  ]
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      {cards.map(({ label, value, color }) => (
+        <div key={label} className={`rounded-lg px-3 py-2 text-center ${color}`}>
+          <p className="text-xs opacity-80">{label}</p>
+          <p className="text-lg font-bold">{value.toLocaleString('es-AR')}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 function formatDate(dateStr?: string) {
   if (!dateStr) return '—'
@@ -72,6 +162,7 @@ export default function ScraperPage() {
   const [progress, setProgress] = useState(0)
   const [currentQuery, setCurrentQuery] = useState('')
   const [logLines, setLogLines] = useState<string[]>([])
+  const [scraperReport, setScraperReport] = useState<Record<string, SourceStat> | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
@@ -80,12 +171,14 @@ export default function ScraperPage() {
   const [enrichFound, setEnrichFound] = useState(0)
   const [enrichTotal, setEnrichTotal] = useState(0)
   const [enrichStartedAt, setEnrichStartedAt] = useState<Date | null>(null)
+  const [enrichReport, setEnrichReport] = useState<EnrichmentDetails | null>(null)
   const enrichIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [scraperJobId, setScraperJobId] = useState<string | null>(null)
   const [enrichJobId, setEnrichJobId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cancellingId, setCancellingId] = useState<number | null>(null)
+  const [expandedJobId, setExpandedJobId] = useState<number | null>(null)
   const autoCombinedRef = useRef(false)
 
   // Source selector — which free/paid lead sources to query
@@ -162,6 +255,7 @@ export default function ScraperPage() {
     setProgress(0)
     setCurrentQuery('')
     setLogLines(['Iniciando scraper...'])
+    setScraperReport(null)
 
     try {
       const res = await runScraper({ sources: selectedSources })
@@ -183,6 +277,7 @@ export default function ScraperPage() {
             autoCombinedRef.current = false
             setScraperState('error')
             setLogLines((prev) => [...prev, `ERROR: ${data.error}`])
+            if (data.details?.sources) setScraperReport(data.details.sources)
             fetchHistory()
             return
           }
@@ -192,6 +287,7 @@ export default function ScraperPage() {
             setProgress(100)
             setCurrentQuery('Completado')
             setLogLines((prev) => [...prev, `✓ Encontrados: ${data.total_found ?? 0} · Nuevos: ${data.new_found ?? 0}`])
+            if (data.details?.sources) setScraperReport(data.details.sources)
             fetchHistory()
             if (autoCombinedRef.current) {
               autoCombinedRef.current = false
@@ -225,6 +321,7 @@ export default function ScraperPage() {
     setEnrichProgress(0)
     setEnrichFound(0)
     setEnrichTotal(0)
+    setEnrichReport(null)
     setEnrichStartedAt(new Date())
 
     try {
@@ -247,6 +344,7 @@ export default function ScraperPage() {
           setEnrichProgress(enrichJob.progress ?? 0)
           setEnrichFound(enrichJob.nuevos_agregados ?? 0)
           setEnrichTotal(enrichJob.total_encontrados ?? 0)
+          if (enrichJob.details) setEnrichReport(enrichJob.details)
 
           if (enrichJob.estado === 'completado' || enrichJob.estado === 'error') {
             clearInterval(enrichIntervalRef.current!)
@@ -492,6 +590,12 @@ export default function ScraperPage() {
                 </div>
               ))}
             </div>
+            {!isScraperRunning && scraperReport && Object.keys(scraperReport).length > 0 && (
+              <div>
+                <p className="text-sm font-semibold text-slate-700 mb-2">Reporte por fuente</p>
+                <ScraperReportTable sources={scraperReport} />
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -549,9 +653,17 @@ export default function ScraperPage() {
             )}
 
             {enrichState === 'done' && (
-              <p className="text-sm text-emerald-700 font-medium text-center">
-                ✓ {enrichFound} lead{enrichFound !== 1 ? 's' : ''} enriquecido{enrichFound !== 1 ? 's' : ''} de {enrichTotal} procesados
-              </p>
+              <>
+                <p className="text-sm text-emerald-700 font-medium text-center">
+                  ✓ {enrichFound} lead{enrichFound !== 1 ? 's' : ''} enriquecido{enrichFound !== 1 ? 's' : ''} de {enrichTotal} procesados
+                </p>
+                {enrichReport && (
+                  <div>
+                    <p className="text-sm font-semibold text-slate-700 mb-2">Reporte de enriquecimiento</p>
+                    <EnrichmentReportGrid details={enrichReport} />
+                  </div>
+                )}
+              </>
             )}
 
             {enrichState === 'error' && enrichError && (
@@ -599,51 +711,77 @@ export default function ScraperPage() {
                 </TableHeader>
                 <TableBody>
                   {history.map((job) => (
-                    <TableRow key={job.id}>
-                      <TableCell>
-                        <Badge variant={job.tipo === 'enrichment' ? 'secondary' : 'warning'} className="text-xs capitalize">
-                          {job.tipo === 'enrichment' ? 'Enriquec.' : 'Scraper'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-slate-600 text-xs max-w-[180px] truncate">
-                        {job.sources?.length ? job.sources.join(', ') : '—'}
-                      </TableCell>
-                      <TableCell className="text-slate-600 text-sm">{formatDate(job.started_at)}</TableCell>
-                      <TableCell className="text-slate-600 text-sm">{formatDate(job.finished_at)}</TableCell>
-                      <TableCell><JobStatusBadge estado={job.estado} /></TableCell>
-                      <TableCell>
-                        {job.estado === 'corriendo' || job.estado === 'pendiente' ? (
-                          <div className="flex items-center gap-2">
-                            <Progress value={job.progress ?? 0} className="h-1.5 w-20" />
-                            <span className="text-xs text-slate-500">{job.progress ?? 0}%</span>
+                    <Fragment key={job.id}>
+                      <TableRow>
+                        <TableCell>
+                          <Badge variant={job.tipo === 'enrichment' ? 'secondary' : 'warning'} className="text-xs capitalize">
+                            {job.tipo === 'enrichment' ? 'Enriquec.' : 'Scraper'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-slate-600 text-xs max-w-[180px] truncate">
+                          {job.sources?.length ? job.sources.join(', ') : '—'}
+                        </TableCell>
+                        <TableCell className="text-slate-600 text-sm">{formatDate(job.started_at)}</TableCell>
+                        <TableCell className="text-slate-600 text-sm">{formatDate(job.finished_at)}</TableCell>
+                        <TableCell><JobStatusBadge estado={job.estado} /></TableCell>
+                        <TableCell>
+                          {job.estado === 'corriendo' || job.estado === 'pendiente' ? (
+                            <div className="flex items-center gap-2">
+                              <Progress value={job.progress ?? 0} className="h-1.5 w-20" />
+                              <span className="text-xs text-slate-500">{job.progress ?? 0}%</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400">{job.progress ?? 0}%</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-medium">{job.total_encontrados?.toLocaleString('es-AR') ?? '—'}</TableCell>
+                        <TableCell>
+                          {job.nuevos_agregados !== undefined ? (
+                            <span className="text-emerald-700 font-semibold">+{job.nuevos_agregados.toLocaleString('es-AR')}</span>
+                          ) : '—'}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            {(job.estado === 'corriendo' || job.estado === 'pendiente') && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => cancelJob(job.id)}
+                                disabled={cancellingId === job.id}
+                                className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
+                                title="Cancelar job"
+                              >
+                                {cancellingId === job.id
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <StopCircle className="w-3.5 h-3.5" />}
+                              </Button>
+                            )}
+                            {job.details && Object.keys(job.details).length > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setExpandedJobId((prev) => prev === job.id ? null : job.id)}
+                                className="text-slate-500 hover:text-slate-700 h-7 px-2"
+                                title="Ver reporte"
+                              >
+                                {expandedJobId === job.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                              </Button>
+                            )}
                           </div>
-                        ) : (
-                          <span className="text-xs text-slate-400">{job.progress ?? 0}%</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-medium">{job.total_encontrados?.toLocaleString('es-AR') ?? '—'}</TableCell>
-                      <TableCell>
-                        {job.nuevos_agregados !== undefined ? (
-                          <span className="text-emerald-700 font-semibold">+{job.nuevos_agregados.toLocaleString('es-AR')}</span>
-                        ) : '—'}
-                      </TableCell>
-                      <TableCell>
-                        {(job.estado === 'corriendo' || job.estado === 'pendiente') && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => cancelJob(job.id)}
-                            disabled={cancellingId === job.id}
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
-                            title="Cancelar job"
-                          >
-                            {cancellingId === job.id
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <StopCircle className="w-3.5 h-3.5" />}
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
+                        </TableCell>
+                      </TableRow>
+                      {expandedJobId === job.id && job.details && (
+                        <TableRow>
+                          <TableCell colSpan={9} className="bg-slate-50">
+                            {job.tipo === 'enrichment' ? (
+                              <EnrichmentReportGrid details={job.details} />
+                            ) : job.details.sources ? (
+                              <ScraperReportTable sources={job.details.sources} />
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
                   ))}
                 </TableBody>
               </Table>
