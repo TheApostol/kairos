@@ -8,7 +8,9 @@ and free website discovery via DuckDuckGo HTML search.
 import os
 import random
 import re
+import threading
 import time
+import unicodedata
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import unquote
@@ -48,22 +50,30 @@ def _debug_dump(url: str, content: bytes) -> None:
 
 class RateLimiter:
     """Sleeps as needed to keep requests at least `min_interval` seconds
-    apart (plus optional random jitter), per source."""
+    apart (plus optional random jitter), per source.
+
+    Thread-safe: callers from multiple threads (e.g. concurrent enrichment
+    workers sharing one source's rate limiter) queue up on `_lock` rather
+    than racing to read/write `_last_request`, which would otherwise let
+    bursts of requests slip through above the intended rate.
+    """
 
     def __init__(self, min_interval: float = 1.0, jitter: float = 0.0):
         self.min_interval = min_interval
         self.jitter = jitter
         self._last_request: float = 0.0
+        self._lock = threading.Lock()
 
     def wait(self) -> None:
-        now = time.monotonic()
-        elapsed = now - self._last_request
-        delay = self.min_interval - elapsed
-        if self.jitter:
-            delay += random.uniform(0, self.jitter)
-        if delay > 0:
-            time.sleep(delay)
-        self._last_request = time.monotonic()
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_request
+            delay = self.min_interval - elapsed
+            if self.jitter:
+                delay += random.uniform(0, self.jitter)
+            if delay > 0:
+                time.sleep(delay)
+            self._last_request = time.monotonic()
 
 
 def fetch_with_retries(
@@ -252,23 +262,55 @@ def ddg_html_search(query: str, max_results: int = 8) -> list[dict]:
     return results
 
 
+# Generic words that appear in lots of Argentine business names but carry
+# no identifying signal on their own (so they're excluded from the
+# name-overlap relevance check below).
+_GENERIC_BUSINESS_WORDS = {
+    "tienda", "casa", "centro", "local", "comercio", "negocio", "shop",
+    "store", "natural", "naturista", "holistico", "holistica", "esoterico",
+    "esoterica", "the", "de", "del", "la", "el", "los", "las",
+}
+
+
+def _name_tokens(text: str) -> set[str]:
+    """Folds text to lowercase ASCII alphanumeric tokens of length >= 4,
+    for a loose name-overlap relevance check (see discover_website_ddg)."""
+    norm = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii").lower()
+    return {t for t in re.findall(r"[a-z0-9]+", norm) if len(t) >= 4}
+
+
 def discover_website_ddg(empresa: str, ciudad: str = "", provincia: str = "") -> str:
     """Free website discovery via DuckDuckGo's HTML endpoint (no API key).
 
     Returns the first plausible business website (filtering out directories,
     social networks, and map services), or "" if nothing useful is found
     (including if DDG rate-limits/blocks the request — this is best-effort).
+
+    Each candidate is checked for at least one name-token overlap between
+    `empresa` and the result's title/domain before being accepted, to avoid
+    confidently assigning an unrelated top search result as the lead's
+    website (e.g. a news article or directory listing that merely mentions
+    the business name).
     """
     if not empresa:
         return ""
 
     query_parts = [empresa, ciudad, provincia, "Argentina"]
     query = " ".join(p for p in query_parts if p)
+    empresa_tokens = _name_tokens(empresa) - _GENERIC_BUSINESS_WORDS
 
     for result in ddg_html_search(query, max_results=5):
         # Strip to scheme://host for a clean "website" field
         m = re.match(r"(https?://[^/]+)", result["url"])
-        if m:
-            return m.group(1)
+        if not m:
+            continue
+        site = m.group(1)
+
+        if empresa_tokens:
+            haystack = _name_tokens(result.get("title", "")) | _name_tokens(site)
+            if not (empresa_tokens & haystack):
+                continue
+
+        return site
 
     return ""
