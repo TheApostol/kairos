@@ -6,6 +6,7 @@ import time
 import json
 from datetime import datetime, timezone
 from typing import Optional, List
+from urllib.parse import urljoin, urlparse
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -90,6 +91,13 @@ _ENRICH_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 }
+
+# Link text/href patterns that indicate a "Contact"/"About us" page when
+# crawling a homepage's nav/footer for real links (see _discover_contact_links)
+_CONTACT_LINK_REGEX = re.compile(
+    r"contact|contacto|nosotros|about|acerca|qui[eé]nes[\s\-]?somos|empresa\b|info\b",
+    re.IGNORECASE,
+)
 
 FAKE_EMAIL_FRAGMENTS = [
     "noreply", "no-reply", "example", "domain.com", "sentry", "wix.com", "shopify",
@@ -344,6 +352,36 @@ def _extract_from_soup(soup, result: dict) -> None:
                     result["telefono"] = "+" + phone
 
 
+def _discover_contact_links(homepage_url: str, soup, max_links: int = 5) -> list[str]:
+    """Real crawling: look at the homepage's actual <a> links (nav, footer,
+    anywhere) for ones that look like a Contact/About page, instead of only
+    guessing static URL paths. Restricted to the same domain, deduped, and
+    capped at `max_links` so a single site can't blow up the request budget.
+    """
+    base_netloc = urlparse(homepage_url).netloc
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        text = a.get_text(" ", strip=True)
+        if not (_CONTACT_LINK_REGEX.search(href) or _CONTACT_LINK_REGEX.search(text)):
+            continue
+
+        absolute = urljoin(homepage_url + "/", href).split("#")[0]
+        parsed = urlparse(absolute)
+        if parsed.netloc and parsed.netloc != base_netloc:
+            continue  # stay on-site — ignore links to other domains
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        candidates.append(absolute)
+        if len(candidates) >= max_links:
+            break
+    return candidates
+
+
 def _scrape_website(url: str) -> dict:
     import httpx
     try:
@@ -357,10 +395,10 @@ def _scrape_website(url: str) -> dict:
         return result
 
     base_url = url.rstrip("/")
-    # Try contact pages first (more likely to have email), then homepage fallback
-    pages_to_try = [
+    # Static path guesses, used as a fallback alongside (not instead of) real
+    # crawling below, in case the homepage doesn't link its contact page.
+    static_guesses = [
         base_url + "/contacto",
-        base_url,                          # homepage second — most AR sites have Contáctenos in footer
         base_url + "/contactanos",
         base_url + "/contact",
         base_url + "/contact-us",
@@ -377,14 +415,29 @@ def _scrape_website(url: str) -> dict:
         base_url + "/paginas/contacto",    # Tiendanube
         base_url + "/info",
     ]
+    # Homepage goes first — we need to read it anyway to discover real
+    # contact/about links from its nav/footer before falling back to guesses.
+    pages_to_try = [base_url] + static_guesses
 
     HEAD_BYTES = 80_000    # first 80KB covers <head> JSON-LD, meta, and nav
     TAIL_BYTES = 150_000   # last 150KB covers footer where emails live
     SMALL_PAGE = HEAD_BYTES + TAIL_BYTES   # pages under this → read fully
+    MAX_PAGES = 12         # hard cap on total requests per site
+
+    seen_urls: set[str] = set()
+    homepage_crawled = False
 
     try:
         with httpx.Client(timeout=12, follow_redirects=True) as client:
-            for page_url in pages_to_try:
+            i = 0
+            pages_visited = 0
+            while i < len(pages_to_try) and pages_visited < MAX_PAGES:
+                page_url = pages_to_try[i]
+                i += 1
+                if page_url in seen_urls:
+                    continue
+                seen_urls.add(page_url)
+                pages_visited += 1
                 try:
                     # Stream response — read up to TAIL_BYTES past SMALL_PAGE limit
                     raw_chunks: list[bytes] = []
@@ -414,6 +467,13 @@ def _scrape_website(url: str) -> dict:
                         from bs4 import BeautifulSoup
                         soup = BeautifulSoup(text, "html.parser")
                         _extract_from_soup(soup, result)
+                        if page_url == base_url and not homepage_crawled:
+                            homepage_crawled = True
+                            discovered = _discover_contact_links(base_url, soup)
+                            # Real links take priority over the remaining static
+                            # guesses — insert them right after the homepage.
+                            new_links = [l for l in discovered if l not in seen_urls and l not in pages_to_try]
+                            pages_to_try[i:i] = new_links
                         soup.decompose()
                         del soup
                     else:
