@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS scraper_jobs (
 );
 
 ALTER TABLE scraper_jobs ADD COLUMN IF NOT EXISTS details jsonb DEFAULT '{}'::jsonb;
+ALTER TABLE scraper_jobs ADD COLUMN IF NOT EXISTS job_type text DEFAULT 'scraper';
+ALTER TABLE scraper_jobs ADD COLUMN IF NOT EXISTS params jsonb DEFAULT '{}'::jsonb;
 
 -- PRODUCTS / CATALOG
 CREATE TABLE IF NOT EXISTS products (
