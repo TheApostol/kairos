@@ -9,7 +9,7 @@ import unicodedata
 from datetime import datetime, timezone
 from typing import Optional, List
 from urllib.parse import urljoin, urlparse
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 class ScraperStartRequest(BaseModel):
     queries: Optional[List[str]] = None
-    google_api_key: Optional[str] = None
     max_per_query: int = 60
     tipo_cliente: str = "lead"  # "lead" or "mayorista"
     sources: Optional[List[str]] = None
@@ -878,14 +877,16 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
 # ─────────────────────────────────────────────
 
 @router.post("/start")
-def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
+def start_scraper(body: ScraperStartRequest, current_org: OrgContext = Depends(get_current_org)):
     sources = body.sources or DEFAULT_SOURCES
 
-    api_key = body.google_api_key or settings.GOOGLE_API_KEY
-    if "google_places" in sources and not api_key:
+    # Jobs are picked up by the separate worker process (see worker.py), which
+    # only has access to settings.GOOGLE_API_KEY (an env var) — not to this
+    # request's body — so a per-request API key isn't persisted or supported.
+    if "google_places" in sources and not settings.GOOGLE_API_KEY:
         raise HTTPException(
             status_code=400,
-            detail="Google API key required for the google_places source. Pass google_api_key in the request body or set GOOGLE_API_KEY env var.",
+            detail="Google API key required for the google_places source. Set the GOOGLE_API_KEY env var.",
         )
 
     # Auto-fail any stuck jobs before checking for conflicts
@@ -909,12 +910,18 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, 
 
     job = current_org.db.insert("scraper_jobs", {
         "status": "pending",
+        "job_type": "scraper",
         "queries": queries,
         "sources": sources,
         "progress": 0,
         "total": len(sources),
         "new_found": 0,
         "total_found": 0,
+        "params": {
+            "tipo_cliente": tipo_cliente,
+            "max_per_query": body.max_per_query,
+            "source_options": body.source_options,
+        },
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -922,12 +929,9 @@ def start_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, 
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create scraper job")
 
-    org_id = current_org.organization_id
-    background_tasks.add_task(
-        _run_scraper_job, str(job_id), sources, queries, api_key, body.max_per_query,
-        tipo_cliente, body.source_options, org_id,
-    )
-
+    # The worker process (worker.py) polls for pending jobs and runs them —
+    # this endpoint only ever enqueues, so a web-process restart/redeploy
+    # while the job runs can no longer kill it mid-way.
     return {"job_id": job_id, "status": "pending", "sources": sources, "tipo_cliente": tipo_cliente}
 
 
@@ -975,9 +979,9 @@ async def stream_job_progress(job_id: str, current_org: OrgContext = Depends(get
 
 
 @router.post("/run")
-def run_scraper(body: ScraperStartRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
+def run_scraper(body: ScraperStartRequest, current_org: OrgContext = Depends(get_current_org)):
     """Alias for /start — used by the frontend."""
-    return start_scraper(body, background_tasks, current_org)
+    return start_scraper(body, current_org)
 
 
 STUCK_JOB_TIMEOUT_MINUTES = 180
@@ -1027,7 +1031,7 @@ def get_history(current_org: OrgContext = Depends(get_current_org)):
             "error": job.get("error_msg"),
             "progress": job.get("progress", 0),
             "total": job.get("total", 0),
-            "tipo": "enrichment" if job.get("queries") == ["enrichment"] else "scraper",
+            "tipo": job.get("job_type") or ("enrichment" if job.get("queries") == ["enrichment"] else "scraper"),
             "sources": job.get("sources"),
             "details": job.get("details"),
         }
@@ -1092,7 +1096,7 @@ async def stream_latest_progress(current_org: OrgContext = Depends(get_current_o
 
 
 @router.post("/enrich")
-def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
+def start_enrichment(body: EnrichRequest, current_org: OrgContext = Depends(get_current_org)):
     # Auto-fail stuck jobs before conflict check
     stuck = current_org.db.raw_select("scraper_jobs", {"select": "id,status,started_at,created_at", "status": "in.(pending,running)", "limit": 10})
     _auto_fail_stuck_jobs(stuck, current_org.db)
@@ -1104,10 +1108,12 @@ def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks, cur
 
     job = current_org.db.insert("scraper_jobs", {
         "status": "pending",
+        "job_type": "enrichment",
         "queries": ["enrichment"],
         "progress": 0,
         "new_found": 0,
         "total_found": 0,
+        "params": {"lead_ids": body.lead_ids},
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -1115,7 +1121,5 @@ def start_enrichment(body: EnrichRequest, background_tasks: BackgroundTasks, cur
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create enrichment job")
 
-    org_id = current_org.organization_id
-    background_tasks.add_task(_run_enrichment_job, str(job_id), body.lead_ids, org_id)
-
+    # Picked up by the worker process (worker.py) — see /start for why.
     return {"job_id": job_id, "status": "pending"}

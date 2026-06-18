@@ -82,6 +82,23 @@ class SupabaseClient:
                 raise Exception(f"Supabase PATCH error {resp.status_code}: {resp.text}")
             return {}
 
+    def update_returning(self, table: str, id: Any, data: dict, extra_filters: Optional[dict] = None) -> list:
+        """Like `update`, but returns the updated rows (an empty list if
+        `extra_filters` excluded the row) — used for atomic claims, e.g. a
+        worker setting a job to 'running' only if it was still 'pending'."""
+        params = {"id": f"eq.{id}", **(extra_filters or {})}
+        headers = {**self.headers, "Prefer": "return=representation"}
+        with httpx.Client(timeout=30) as client:
+            resp = client.patch(
+                self._rest_url(table),
+                headers=headers,
+                params=params,
+                json=data,
+            )
+            if not resp.is_success:
+                raise Exception(f"Supabase PATCH error {resp.status_code}: {resp.text}")
+            return resp.json()
+
     def delete(self, table: str, id: Any, extra_filters: Optional[dict] = None) -> None:
         params = {"id": f"eq.{id}", **(extra_filters or {})}
         with httpx.Client(timeout=30) as client:

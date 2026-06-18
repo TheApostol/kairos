@@ -1,42 +1,17 @@
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from routers import leads, scraper, campaigns, orders, products, organizations, public
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # On startup: fail any jobs that were interrupted by a previous server restart
-    try:
-        from services.supabase_client import db
-        from datetime import datetime, timezone
-        db.raw_select  # ensure client is warm
-        interrupted = db.raw_select("scraper_jobs", {
-            "select": "id",
-            "status": "in.(running,pending)",
-            "limit": 50,
-        })
-        now = datetime.now(timezone.utc).isoformat()
-        for job in interrupted:
-            try:
-                db.update("scraper_jobs", job["id"], {
-                    "status": "failed",
-                    "error_msg": "Job interrupted (server restart)",
-                    "completed_at": now,
-                })
-            except Exception:
-                pass
-    except Exception:
-        pass
-    yield
-
+# Scraper/enrichment jobs run in the separate worker process (worker.py),
+# not in this web process — so a web restart/redeploy no longer interrupts
+# them, and this process has nothing to recover on startup. The worker
+# requeues its own orphaned 'running' jobs on its own startup instead.
 app = FastAPI(
     title="Kairos CRM API",
     description="Backend API for Kairos CRM",
     version="1.0.0",
-    lifespan=lifespan,
 )
 
 # The production frontend is always allowed, even if ALLOWED_ORIGINS isn't
