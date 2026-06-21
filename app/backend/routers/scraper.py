@@ -18,6 +18,8 @@ from services.supabase_client import db, ScopedSupabaseClient
 from services.scraping_utils import discover_website_ddg
 from sources import SOURCE_REGISTRY, DEFAULT_SOURCES
 from sources.google_places import DEFAULT_QUERIES, MAYORISTA_QUERIES, PlacesAPIError
+from sources.paginas_amarillas import search_by_name as pa_search_by_name
+from sources.overpass import search_by_name as overpass_search_by_name
 from config import settings
 
 router = APIRouter(prefix="/scraper", tags=["scraper"])
@@ -718,12 +720,25 @@ def _run_scraper_job(
         })
 
 
+# Cross-reference sources consulted, in priority order, for whatever fields
+# are still missing after the website-discovery/scrape pass below — every
+# free directory source except google_places (which this pipeline never
+# uses). Each is cheap to skip: pa_search_by_name returns fast without a
+# resolvable location, overpass_search_by_name without a covered city.
+_CROSS_REFERENCE_SOURCES = [pa_search_by_name, overpass_search_by_name]
+_CROSS_REFERENCE_FIELDS = (
+    "website", "email", "instagram", "whatsapp", "telefono", "direccion", "ciudad", "provincia",
+)
+
+
 def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
     """Discovers a website (if missing) and scrapes it for contact fields,
-    writing any updates straight to `lead`'s row. Returns a stats delta
-    dict (same keys as `_run_enrichment_job`'s `field_stats`, plus
-    `enriched`) for the caller to aggregate — kept side-effect-free on
-    shared state so it's safe to run from a thread pool."""
+    then cross-references whatever's still missing against the other free
+    directory sources by business name (see `_CROSS_REFERENCE_SOURCES`).
+    Writes any updates straight to `lead`'s row. Returns a stats delta dict
+    (same keys as `_run_enrichment_job`'s `field_stats`, plus `enriched`)
+    for the caller to aggregate — kept side-effect-free on shared state so
+    it's safe to run from a thread pool."""
     stats = {
         "websites_discovered": 0,
         "emails_found": 0,
@@ -736,8 +751,9 @@ def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
     }
 
     website = lead.get("website", "") or ""
+    update_data: dict = {}
 
-    # If no website on file, try to discover it for free via DuckDuckGo
+    # If no website on file, try to discover it for free via DuckDuckGo.
     if not website and lead.get("empresa"):
         website = _discover_website(
             lead.get("empresa", ""),
@@ -745,22 +761,41 @@ def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
             lead.get("provincia", ""),
         )
         if website:
-            scoped_db.update("leads", lead["id"], {"website": website})
-            stats["websites_discovered"] += 1
+            update_data["website"] = website
 
-    if not website:
+    if website:
+        enrich = _scrape_website(website)
+        for field in ["email", "instagram", "whatsapp", "telefono", "direccion", "ciudad", "provincia"]:
+            if enrich.get(field) and not lead.get(field):
+                update_data[field] = enrich[field]
+    else:
         stats["no_website"] += 1
-        return stats
 
-    enrich = _scrape_website(website)
-    update_data = {}
-
-    for field in ["email", "instagram", "whatsapp", "telefono", "direccion", "ciudad", "provincia"]:
-        if enrich.get(field) and not lead.get(field):
-            update_data[field] = enrich[field]
+    # Cross-reference the other free directory sources for whatever's still
+    # missing, by business name.
+    merged = {**lead, **update_data}
+    missing = [f for f in _CROSS_REFERENCE_FIELDS if not merged.get(f)]
+    if missing and lead.get("empresa"):
+        for search_fn in _CROSS_REFERENCE_SOURCES:
+            if not missing:
+                break
+            try:
+                found = search_fn(lead.get("empresa", ""), merged.get("ciudad", ""), merged.get("provincia", ""))
+            except Exception:
+                logger.warning("Cross-reference lookup failed for lead %r", lead.get("empresa"), exc_info=True)
+                continue
+            if not found:
+                continue
+            for field in list(missing):
+                value = found.get(field)
+                if value:
+                    update_data[field] = value
+                    merged[field] = value
+                    missing.remove(field)
 
     if update_data:
-        merged = {**lead, **update_data}
+        if update_data.get("website") and not lead.get("website"):
+            stats["websites_discovered"] += 1
         update_data["score_ia"] = _score_lead(merged)
         update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         scoped_db.update("leads", lead["id"], update_data)

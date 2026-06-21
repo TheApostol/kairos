@@ -264,19 +264,31 @@ def ddg_html_search(query: str, max_results: int = 8) -> list[dict]:
 
 # Generic words that appear in lots of Argentine business names but carry
 # no identifying signal on their own (so they're excluded from the
-# name-overlap relevance check below).
-_GENERIC_BUSINESS_WORDS = {
+# name-overlap relevance check below). Shared across sources that need to
+# confirm a search result actually matches a given lead name (DDG website
+# discovery, directory cross-referencing).
+GENERIC_BUSINESS_WORDS = {
     "tienda", "casa", "centro", "local", "comercio", "negocio", "shop",
     "store", "natural", "naturista", "holistico", "holistica", "esoterico",
     "esoterica", "the", "de", "del", "la", "el", "los", "las",
 }
 
 
-def _name_tokens(text: str) -> set[str]:
+def name_tokens(text: str) -> set[str]:
     """Folds text to lowercase ASCII alphanumeric tokens of length >= 4,
-    for a loose name-overlap relevance check (see discover_website_ddg)."""
+    for a loose name-overlap relevance check (see discover_website_ddg and
+    sources/paginas_amarillas.py's search_by_name)."""
     norm = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii").lower()
     return {t for t in re.findall(r"[a-z0-9]+", norm) if len(t) >= 4}
+
+
+def slugify(text: str) -> str:
+    """Lowercase ASCII, accent-stripped, hyphen-separated slug — for
+    directory sites whose URLs encode a business/category/location name
+    (e.g. paginasamarillas.com.ar's `/b/{slug}/{location-slug}`)."""
+    norm = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii").lower()
+    norm = re.sub(r"[^a-z0-9]+", "-", norm)
+    return norm.strip("-")
 
 
 def discover_website_ddg(empresa: str, ciudad: str = "", provincia: str = "") -> str:
@@ -297,7 +309,7 @@ def discover_website_ddg(empresa: str, ciudad: str = "", provincia: str = "") ->
 
     query_parts = [empresa, ciudad, provincia, "Argentina"]
     query = " ".join(p for p in query_parts if p)
-    empresa_tokens = _name_tokens(empresa) - _GENERIC_BUSINESS_WORDS
+    empresa_tokens = name_tokens(empresa) - GENERIC_BUSINESS_WORDS
 
     for result in ddg_html_search(query, max_results=5):
         # Strip to scheme://host for a clean "website" field
@@ -307,7 +319,7 @@ def discover_website_ddg(empresa: str, ciudad: str = "", provincia: str = "") ->
         site = m.group(1)
 
         if empresa_tokens:
-            haystack = _name_tokens(result.get("title", "")) | _name_tokens(site)
+            haystack = name_tokens(result.get("title", "")) | name_tokens(site)
             if not (empresa_tokens & haystack):
                 continue
 

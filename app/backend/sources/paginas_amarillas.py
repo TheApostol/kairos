@@ -11,8 +11,15 @@ import json
 import re
 from typing import Iterator, Optional
 
-from constants.scraper_targets import build_freetext_queries
-from services.scraping_utils import RateLimiter, fetch_with_retries, make_lead_record
+from constants.scraper_targets import GEO_TARGETS, build_freetext_queries
+from services.scraping_utils import (
+    GENERIC_BUSINESS_WORDS,
+    RateLimiter,
+    fetch_with_retries,
+    make_lead_record,
+    name_tokens,
+    slugify,
+)
 from . import register_source
 
 BASE_URL = "https://www.paginasamarillas.com.ar"
@@ -41,7 +48,10 @@ def _first(values) -> str:
     return ""
 
 
-def _make_record_from_result(result: dict, rubro_label: str, tipo_cliente: str) -> Optional[dict]:
+def _extract_fields(result: dict) -> Optional[dict]:
+    """Pulls the contact/address fields out of one PA search-result dict.
+    Shared by `_make_record_from_result` (new-lead creation) and
+    `search_by_name` (enrichment cross-reference)."""
     name = result.get("name", "").strip()
     if not name:
         return None
@@ -65,20 +75,39 @@ def _make_record_from_result(result: dict, rubro_label: str, tipo_cliente: str) 
     info_url = result.get("infoUrl", "")
     ficha_url = f"{BASE_URL}{info_url}" if info_url.startswith("/") else info_url
 
+    return {
+        "empresa": name,
+        "direccion": direccion,
+        "ciudad": ciudad,
+        "provincia": provincia,
+        "telefono": telefono,
+        "website": website,
+        "email": email,
+        "instagram": instagram,
+        "observaciones": result.get("infoLine", "") or "",
+        "ficha_url": ficha_url,
+    }
+
+
+def _make_record_from_result(result: dict, rubro_label: str, tipo_cliente: str) -> Optional[dict]:
+    fields = _extract_fields(result)
+    if not fields:
+        return None
+
     return make_lead_record(
-        empresa=name,
+        empresa=fields["empresa"],
         rubro=rubro_label,
-        direccion=direccion,
-        ciudad=ciudad,
-        provincia=provincia,
-        telefono=telefono,
-        website=website,
-        email=email,
-        instagram=instagram,
-        observaciones=result.get("infoLine", "") or "",
+        direccion=fields["direccion"],
+        ciudad=fields["ciudad"],
+        provincia=fields["provincia"],
+        telefono=fields["telefono"],
+        website=fields["website"],
+        email=fields["email"],
+        instagram=fields["instagram"],
+        observaciones=fields["observaciones"],
         fuente="Páginas Amarillas",
         tipo_cliente=tipo_cliente,
-        ficha_url=ficha_url,
+        ficha_url=fields["ficha_url"],
     )
 
 
@@ -120,6 +149,61 @@ def _iter_listing_results(category_slug: str, location_slug: str) -> Iterator[di
         if fetched >= seen_total or len(results) < _PAGE_SIZE:
             return
         page += 1
+
+
+def _location_slug_for(ciudad: str, provincia: str) -> str:
+    """Maps a lead's free-text ciudad/provincia to a PA location slug.
+    Tries an exact (accent/case-insensitive) match against GEO_TARGETS'
+    `name` first, then falls back to slugifying provincia directly — PA
+    accepts province-level slugs (confirmed: e.g. "santa-fe" returns more
+    results than the single-city "rosario" slug), but has no national
+    wildcard, so an empty string means "can't search this lead"."""
+    ciudad_norm = slugify(ciudad)
+    for geo in GEO_TARGETS:
+        if slugify(geo["name"]) == ciudad_norm:
+            return geo["pa_slug"]
+    if provincia:
+        return slugify(provincia)
+    return ""
+
+
+def search_by_name(empresa: str, ciudad: str = "", provincia: str = "") -> Optional[dict]:
+    """Cross-references a lead against paginasamarillas.com.ar by slugifying
+    its name into PA's `/b/{slug}/{location}` route — confirmed via manual
+    testing to behave as a free-text business-name search rather than a
+    fixed category index (e.g. `/b/farmacia-rucci/rosario` returns exactly
+    that business). Returns a flat dict of contact fields for merging into
+    an existing lead, or None if no confident match was found.
+
+    Best-effort: requires a resolvable location slug (no national-wide
+    search exists on PA), and only accepts a result whose name shares at
+    least one non-generic token with `empresa`, to avoid confidently
+    merging in an unrelated business's contact info.
+    """
+    if not empresa:
+        return None
+
+    location_slug = _location_slug_for(ciudad, provincia)
+    if not location_slug:
+        return None
+
+    name_slug = slugify(empresa)
+    if not name_slug:
+        return None
+
+    empresa_tokens = name_tokens(empresa) - GENERIC_BUSINESS_WORDS
+
+    for result in _iter_listing_results(name_slug, location_slug):
+        fields = _extract_fields(result)
+        if not fields:
+            continue
+
+        if empresa_tokens and not (empresa_tokens & (name_tokens(fields["empresa"]) - GENERIC_BUSINESS_WORDS)):
+            continue
+
+        return fields
+
+    return None
 
 
 @register_source("paginas_amarillas")
