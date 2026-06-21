@@ -72,6 +72,36 @@ def _pdf_text(value) -> str:
     return _xml_escape(str(value)) if value else ""
 
 
+_IMAGE_FETCH_HEADERS = {
+    # Several product images are hosted behind a CDN (CloudFront) that
+    # returns 403 for requests with no/non-browser User-Agent — confirmed
+    # via direct testing (httpx's default "python-httpx/x.y.z" UA gets
+    # blocked, a browser-like one doesn't). Without this, every image
+    # silently failed to fetch and no catalog ever had images.
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+}
+
+
+def _decoded_image_bytes(content: bytes) -> Optional[bytes]:
+    """Verifies `content` is actually decodable image data before it's handed
+    to ReportLab. `reportlab.platypus.Image` only decodes lazily at
+    `doc.build()` time — by then there's no try/except around it, so a
+    single corrupt/non-image response (e.g. a CDN's 200 OK HTML error page)
+    would crash the *entire* catalog export instead of just skipping that
+    one image."""
+    try:
+        from PIL import Image as PILImage
+        import io as _io
+        with PILImage.open(_io.BytesIO(content)) as img:
+            img.verify()
+        return content
+    except Exception:
+        return None
+
+
 def _prefetch_images(urls: set) -> dict:
     """Downloads all unique http(s) product image URLs concurrently.
 
@@ -89,9 +119,9 @@ def _prefetch_images(urls: set) -> dict:
 
     def _fetch(url: str):
         try:
-            resp = httpx.get(url, timeout=5, follow_redirects=True)
+            resp = httpx.get(url, timeout=5, follow_redirects=True, headers=_IMAGE_FETCH_HEADERS)
             if resp.status_code == 200:
-                return url, resp.content
+                return url, _decoded_image_bytes(resp.content)
         except Exception:
             pass
         return url, None
