@@ -11,6 +11,14 @@ from services.supabase_client import db
 router = APIRouter(prefix="/platform", tags=["platform"])
 
 
+def _usage_totals(events: list[dict]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for event in events:
+        metric = event.get("metric") or "unknown"
+        totals[metric] = totals.get(metric, 0) + int(event.get("quantity") or 0)
+    return totals
+
+
 @router.get("/summary")
 def platform_summary(admin: PlatformAdminContext = Depends(require_platform_role())):
     orgs = db.select("organizations", limit=10000)
@@ -20,32 +28,44 @@ def platform_summary(admin: PlatformAdminContext = Depends(require_platform_role
 
     active_orgs = [o for o in orgs if o.get("status") == "active"]
     trial_orgs = [o for o in orgs if o.get("status") == "trialing"]
+    lead_clients = [o for o in orgs if o.get("customer_tier") == "lead_client"]
+    kairos_org = next((o for o in orgs if o.get("slug") == "kairos" or o.get("id") == "00000000-0000-0000-0000-000000000001"), None)
     past_due = [s for s in subscriptions if s.get("status") == "past_due"]
-
-    usage_totals: dict[str, int] = {}
-    for event in usage:
-        metric = event.get("metric") or "unknown"
-        usage_totals[metric] = usage_totals.get(metric, 0) + int(event.get("quantity") or 0)
 
     return {
         "organizations_total": len(orgs),
         "organizations_active": len(active_orgs),
         "organizations_trialing": len(trial_orgs),
+        "lead_clients_total": len(lead_clients),
+        "kairos_lead_client": kairos_org,
         "subscriptions_total": len(subscriptions),
         "subscriptions_past_due": len(past_due),
-        "usage_30d": usage_totals,
+        "usage_30d": _usage_totals(usage),
     }
 
 
 @router.get("/organizations")
 def list_platform_organizations(
     status: Optional[str] = None,
+    customer_tier: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=500),
     admin: PlatformAdminContext = Depends(require_platform_role()),
 ):
-    filters = {"status": f"eq.{status}"} if status else None
-    orgs = db.select("organizations", filters=filters, order="created_at.desc", limit=limit)
+    filters = {}
+    if status:
+        filters["status"] = f"eq.{status}"
+    if customer_tier:
+        filters["customer_tier"] = f"eq.{customer_tier}"
+    orgs = db.select("organizations", filters=filters or None, order="created_at.desc", limit=limit)
     return {"items": orgs, "total": len(orgs)}
+
+
+@router.get("/lead-client")
+def get_lead_client(admin: PlatformAdminContext = Depends(require_platform_role())):
+    orgs = db.select("organizations", filters={"customer_tier": "eq.lead_client"}, order="created_at.asc", limit=10)
+    if not orgs:
+        orgs = db.select("organizations", filters={"slug": "eq.kairos"}, limit=1)
+    return {"items": orgs, "primary": orgs[0] if orgs else None}
 
 
 @router.get("/organizations/{organization_id}/billing")
@@ -75,11 +95,7 @@ def get_org_usage(
         filters={"organization_id": f"eq.{organization_id}", "created_at": f"gte.{since}"},
         select_cols="metric,quantity,created_at,source,entity,entity_id",
     )
-    totals: dict[str, int] = {}
-    for event in events:
-        metric = event.get("metric") or "unknown"
-        totals[metric] = totals.get(metric, 0) + int(event.get("quantity") or 0)
-    return {"days": days, "totals": totals, "events": events[:500]}
+    return {"days": days, "totals": _usage_totals(events), "events": events[:500]}
 
 
 @router.get("/audit-logs")
