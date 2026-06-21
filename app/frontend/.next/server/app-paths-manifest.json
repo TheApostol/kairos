@@ -14,8 +14,8 @@
   "/orders/page": "app/orders/page.js",
   "/page": "app/page.js",
   "/pipeline/page": "app/pipeline/page.js",
-  "/signup/page": "app/signup/page.js",
   "/scraper/page": "app/scraper/page.js",
+  "/signup/page": "app/signup/page.js",
   "/team/page": "app/team/page.js",
   "/public/catalog/page": "app/public/catalog/page.js"
 }
