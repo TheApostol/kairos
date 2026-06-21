@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     BREVO_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
+    RENDER_API_KEY: str = ""
 
     # App URLs
     SENDER_EMAIL: str = "noreply@kairos.com"
