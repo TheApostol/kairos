@@ -1,10 +1,13 @@
 """Background worker for scraper/enrichment jobs.
 
-Runs as its own process (a separate Render service, or `python worker.py`
-locally) so that restarting/redeploying the web process no longer kills a
-job mid-run — the web process (routers/scraper.py's /start and /enrich) only
-ever inserts a `pending` row into `scraper_jobs`; this process polls for
-pending rows, claims one at a time, and runs it to completion.
+routers/scraper.py's /start and /enrich only ever insert a `pending` row
+into `scraper_jobs`; `main()` here polls for pending rows, claims one at a
+time, and runs it to completion. By default it's started on a background
+thread from main.py's lifespan, inside the same (free) web service process —
+a deploy/restart still interrupts whatever job was running, but the new
+process's `_recover_orphaned_jobs()` requeues it on startup, so it resumes
+automatically instead of being stuck "failed". `python worker.py` also runs
+it standalone, for anyone who later adds a dedicated (paid) worker service.
 """
 
 import logging
@@ -84,7 +87,10 @@ def _run_job(job: dict) -> None:
 
 def main() -> None:
     logger.info("Worker started, polling scraper_jobs every %ss", POLL_INTERVAL_SECONDS)
-    _recover_orphaned_jobs()
+    try:
+        _recover_orphaned_jobs()
+    except Exception:
+        logger.exception("Error recovering orphaned jobs on startup")
     while True:
         try:
             job = _claim_next_pending_job()
