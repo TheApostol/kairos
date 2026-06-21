@@ -81,9 +81,9 @@ function formatCurrency(n: number) {
 
 function getGreeting() {
   const hour = new Date().getHours()
-  if (hour < 12) return 'Buenos días'
-  if (hour < 19) return 'Buenas tardes'
-  return 'Buenas noches'
+  if (hour < 12) return 'Buen día, Flor'
+  if (hour < 19) return 'Buenas tardes, Flor'
+  return 'Buenas noches, Flor'
 }
 
 function formatToday() {
