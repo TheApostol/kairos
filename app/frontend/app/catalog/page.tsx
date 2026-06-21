@@ -157,6 +157,9 @@ export default function CatalogPage() {
   const [pdfSelectAll, setPdfSelectAll] = useState(true)
   const [selectedForPdf, setSelectedForPdf] = useState<Set<number>>(new Set())
   const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [pdfAllProducts, setPdfAllProducts] = useState<Product[]>([])
+  const [loadingPdfProducts, setLoadingPdfProducts] = useState(false)
+  const [pdfSearch, setPdfSearch] = useState('')
   const [pdfError, setPdfError] = useState('')
 
   // Google Sheets sync
@@ -314,6 +317,22 @@ export default function CatalogPage() {
     if (next.has(id)) next.delete(id)
     else next.add(id)
     setSelectedForPdf(next)
+  }
+
+  const openManualPdfSelection = async () => {
+    setPdfSelectAll(false)
+    if (pdfAllProducts.length > 0) return
+    setLoadingPdfProducts(true)
+    try {
+      // Selección manual must offer the full catalog, not just the
+      // currently-loaded paginated page.
+      const data = await getProducts({ per_page: '5000' })
+      setPdfAllProducts(data.items ?? data ?? [])
+    } catch {
+      setPdfAllProducts(products)
+    } finally {
+      setLoadingPdfProducts(false)
+    }
   }
 
   return (
@@ -795,25 +814,43 @@ export default function CatalogPage() {
                 <Button
                   variant={!pdfSelectAll ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => { setPdfSelectAll(false); setSelectedForPdf(new Set(products.map((p) => p.id))) }}
+                  onClick={openManualPdfSelection}
                 >
                   Selección manual
                 </Button>
               </div>
               {!pdfSelectAll && (
-                <div className="max-h-48 overflow-y-auto space-y-1 border rounded-md p-2 mt-1">
-                  <p className="text-xs text-slate-400 pb-1">Mostrando página actual ({products.length} productos)</p>
-                  {products.map((p) => (
-                    <label key={p.id} className="flex items-center gap-2 cursor-pointer py-1">
-                      <input
-                        type="checkbox"
-                        checked={selectedForPdf.has(p.id)}
-                        onChange={() => togglePdfProduct(p.id)}
-                        className="rounded"
-                      />
-                      <span className="text-sm">{p.nombre}</span>
-                    </label>
-                  ))}
+                <div className="space-y-1.5 mt-1">
+                  <Input
+                    value={pdfSearch}
+                    onChange={(e) => setPdfSearch(e.target.value)}
+                    placeholder="Buscar producto..."
+                    className="h-8 text-sm"
+                  />
+                  <div className="max-h-48 overflow-y-auto space-y-1 border rounded-md p-2">
+                    {loadingPdfProducts ? (
+                      <p className="text-xs text-slate-400 py-2 text-center">Cargando catálogo completo...</p>
+                    ) : (
+                      <>
+                        <p className="text-xs text-slate-400 pb-1">
+                          {selectedForPdf.size} de {pdfAllProducts.length} productos seleccionados
+                        </p>
+                        {pdfAllProducts
+                          .filter((p) => p.nombre.toLowerCase().includes(pdfSearch.toLowerCase()))
+                          .map((p) => (
+                            <label key={p.id} className="flex items-center gap-2 cursor-pointer py-1">
+                              <input
+                                type="checkbox"
+                                checked={selectedForPdf.has(p.id)}
+                                onChange={() => togglePdfProduct(p.id)}
+                                className="rounded"
+                              />
+                              <span className="text-sm">{p.nombre}</span>
+                            </label>
+                          ))}
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
               {pdfSelectAll && (

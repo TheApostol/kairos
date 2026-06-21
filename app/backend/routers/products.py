@@ -115,9 +115,11 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
         bottomMargin=2 * cm,
     )
 
-    # Color palette
-    PRIMARY = HexColor("#1a1a2e")
-    ACCENT = HexColor("#e94560")
+    # Color palette — matches the Kairos brand colors used across the app
+    # (catalog page header/buttons, price-list PDF): brown + gold, not the
+    # previous generic navy/pink scheme.
+    PRIMARY = HexColor("#4A3728")
+    ACCENT = HexColor("#C9A040")
     LIGHT_GRAY = HexColor("#f5f5f5")
     MID_GRAY = HexColor("#888888")
     DARK_GRAY = HexColor("#333333")
@@ -303,7 +305,7 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                 if stock is not None:
                     try:
                         stock_int = int(stock)
-                        stock_color = ACCENT if stock_int <= 5 else HexColor("#27ae60")
+                        stock_color = HexColor("#c0392b") if stock_int <= 5 else HexColor("#27ae60")
                         stock_text = f"Stock: {stock_int} unidades" if stock_int > 0 else "Sin stock"
                         stock_style = ParagraphStyle(
                             "Stock",

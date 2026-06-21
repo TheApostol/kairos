@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS scraper_jobs (
   status       text DEFAULT 'pending'
                CHECK (status IN ('pending','running','completed','failed')),
   queries      jsonb,
-  sources      jsonb DEFAULT '["google_places"]',
+  sources      jsonb DEFAULT '[]'::jsonb,
   total_found  integer DEFAULT 0,
   new_found    integer DEFAULT 0,
   progress     integer DEFAULT 0,
