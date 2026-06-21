@@ -28,6 +28,7 @@ ROUTERS = ROOT / "app" / "backend" / "routers"
 ALLOWED_RAW_DB_FILES = {
     "public.py",          # unauthenticated public catalog; manually filters by organization slug/id
     "organizations.py",   # platform membership/invitation bootstrap; uses auth helpers + explicit filters
+    "platform.py",        # platform admin router; protected by platform_admins, not tenant membership
 }
 
 RAW_DB_CALL_RE = re.compile(r"(?<![A-Za-z0-9_])db\.(select|select_all|raw_select|insert|update|delete|count)\(")
