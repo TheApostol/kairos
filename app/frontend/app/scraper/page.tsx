@@ -1,20 +1,12 @@
 'use client'
 
-import { Fragment, useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { getScraperHistory, runScraper, runEnrichment, cancelScraperJob, getEventSourceUrl, SCRAPER_SOURCES, DEFAULT_SCRAPER_SOURCES } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Zap, ChevronDown, ChevronUp, RotateCw } from 'lucide-react'
+import { Play, RefreshCw, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, StopCircle, Zap, RotateCw } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -70,35 +62,23 @@ const SOURCE_STATUS_LABELS: Record<string, string> = {
 
 function ScraperReportTable({ sources }: { sources: Record<string, SourceStat> }) {
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Fuente</TableHead>
-            <TableHead>Encontrados</TableHead>
-            <TableHead>Nuevos</TableHead>
-            <TableHead>Estado</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {Object.entries(sources).map(([id, stat]) => (
-            <TableRow key={id}>
-              <TableCell className="text-sm font-medium text-slate-700">{SOURCE_LABELS[id] ?? id}</TableCell>
-              <TableCell className="text-sm">{stat.found}</TableCell>
-              <TableCell className="text-sm text-emerald-700 font-semibold">+{stat.new}</TableCell>
-              <TableCell>
-                <Badge
-                  variant={stat.status === 'completed' ? 'success' : stat.status === 'failed' ? 'danger' : stat.status === 'skipped' ? 'warning' : 'secondary'}
-                  className="text-[10px]"
-                  title={stat.error}
-                >
-                  {SOURCE_STATUS_LABELS[stat.status] ?? stat.status}
-                </Badge>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="space-y-1.5">
+      {Object.entries(sources).map(([id, stat]) => (
+        <div key={id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white border border-slate-100 px-3 py-2">
+          <span className="text-sm font-medium text-slate-700">{SOURCE_LABELS[id] ?? id}</span>
+          <div className="flex items-center gap-3 text-xs">
+            <span className="text-slate-500">{stat.found} encontrados</span>
+            <span className="text-emerald-700 font-semibold">+{stat.new}</span>
+            <Badge
+              variant={stat.status === 'completed' ? 'success' : stat.status === 'failed' ? 'danger' : stat.status === 'skipped' ? 'warning' : 'secondary'}
+              className="text-[10px]"
+              title={stat.error}
+            >
+              {SOURCE_STATUS_LABELS[stat.status] ?? stat.status}
+            </Badge>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -184,7 +164,6 @@ export default function ScraperPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [cancellingId, setCancellingId] = useState<number | null>(null)
   const [retryingId, setRetryingId] = useState<number | null>(null)
-  const [expandedJobId, setExpandedJobId] = useState<number | null>(null)
   const autoCombinedRef = useRef(false)
 
   // Source selector — which free/paid lead sources to query
@@ -722,7 +701,7 @@ export default function ScraperPage() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className={history.length > 0 ? 'space-y-3' : ''}>
           {loadingHistory ? (
             <div className="flex items-center justify-center h-32">
               <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
@@ -733,121 +712,106 @@ export default function ScraperPage() {
               <p className="text-sm">Sin historial de ejecuciones</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table className="min-w-[600px]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Fuentes</TableHead>
-                    <TableHead>Inicio</TableHead>
-                    <TableHead>Fin</TableHead>
-                    <TableHead>Estado</TableHead>
-                    <TableHead>Progreso</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead>Nuevos</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {history.map((job) => (
-                    <Fragment key={job.id}>
-                      <TableRow>
-                        <TableCell>
-                          <Badge variant={job.tipo === 'enrichment' ? 'secondary' : 'warning'} className="text-xs capitalize">
-                            {job.tipo === 'enrichment' ? 'Enriquec.' : 'Scraper'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-slate-600 text-xs max-w-[180px] truncate">
-                          {job.sources?.length ? job.sources.join(', ') : '—'}
-                        </TableCell>
-                        <TableCell className="text-slate-600 text-sm">{formatDate(job.started_at)}</TableCell>
-                        <TableCell className="text-slate-600 text-sm">{formatDate(job.finished_at)}</TableCell>
-                        <TableCell>
-                          <JobStatusBadge estado={job.estado} />
-                          {job.estado === 'error' && job.error && (
-                            <p className="text-[11px] text-slate-400 mt-1 max-w-[160px]" title={job.error}>
-                              {isInterruptedError(job.error)
-                                ? 'Interrumpido por un reinicio del servidor — los leads ya encontrados se guardaron.'
-                                : job.error}
-                            </p>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {job.estado === 'corriendo' || job.estado === 'pendiente' ? (
-                            <div className="flex items-center gap-2">
-                              <Progress value={job.progress ?? 0} className="h-1.5 w-20" />
-                              <span className="text-xs text-slate-500">{job.progress ?? 0}%</span>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-400">{job.progress ?? 0}%</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="font-medium">{job.total_encontrados?.toLocaleString('es-AR') ?? '—'}</TableCell>
-                        <TableCell>
-                          {job.nuevos_agregados !== undefined ? (
-                            <span className="text-emerald-700 font-semibold">+{job.nuevos_agregados.toLocaleString('es-AR')}</span>
-                          ) : '—'}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            {(job.estado === 'corriendo' || job.estado === 'pendiente') && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => cancelJob(job.id)}
-                                disabled={cancellingId === job.id}
-                                className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
-                                title="Cancelar job"
-                              >
-                                {cancellingId === job.id
-                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  : <StopCircle className="w-3.5 h-3.5" />}
-                              </Button>
-                            )}
-                            {job.estado === 'error' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => retryJob(job)}
-                                disabled={anyJobRunning || retryingId === job.id}
-                                className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 h-7 px-2"
-                                title="Reintentar con las mismas fuentes"
-                              >
-                                {retryingId === job.id
-                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  : <RotateCw className="w-3.5 h-3.5" />}
-                              </Button>
-                            )}
-                            {job.details && Object.keys(job.details).length > 0 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setExpandedJobId((prev) => prev === job.id ? null : job.id)}
-                                className="text-slate-500 hover:text-slate-700 h-7 px-2"
-                                title="Ver reporte"
-                              >
-                                {expandedJobId === job.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                      {expandedJobId === job.id && job.details && (
-                        <TableRow>
-                          <TableCell colSpan={9} className="bg-slate-50">
-                            {job.tipo === 'enrichment' ? (
-                              <EnrichmentReportGrid details={job.details} />
-                            ) : job.details.sources ? (
-                              <ScraperReportTable sources={job.details.sources} />
-                            ) : null}
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </Fragment>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            history.map((job) => (
+              <div key={job.id} className="rounded-xl border border-slate-200 p-3 sm:p-4 space-y-3">
+                {/* Header: type, status, actions */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant={job.tipo === 'enrichment' ? 'secondary' : 'warning'} className="text-xs capitalize">
+                      {job.tipo === 'enrichment' ? 'Enriquec.' : 'Scraper'}
+                    </Badge>
+                    <JobStatusBadge estado={job.estado} />
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {(job.estado === 'corriendo' || job.estado === 'pendiente') && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => cancelJob(job.id)}
+                        disabled={cancellingId === job.id}
+                        className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
+                        title="Cancelar job"
+                      >
+                        {cancellingId === job.id
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <StopCircle className="w-3.5 h-3.5" />}
+                      </Button>
+                    )}
+                    {job.estado === 'error' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => retryJob(job)}
+                        disabled={anyJobRunning || retryingId === job.id}
+                        className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 h-7 px-2"
+                        title="Reintentar con las mismas fuentes"
+                      >
+                        {retryingId === job.id
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <RotateCw className="w-3.5 h-3.5" />}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {job.estado === 'error' && job.error && (
+                  <p className="text-xs text-slate-500">
+                    {isInterruptedError(job.error)
+                      ? 'Interrumpido por un reinicio del servidor — los leads ya encontrados se guardaron.'
+                      : job.error}
+                  </p>
+                )}
+
+                {/* Meta grid — wraps on mobile, no horizontal scroll */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                  <div className="col-span-2 sm:col-span-1">
+                    <p className="text-xs text-slate-400">Fuentes</p>
+                    <p className="text-slate-700 break-words">{job.sources?.length ? job.sources.join(', ') : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Inicio</p>
+                    <p className="text-slate-700">{formatDate(job.started_at)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Fin</p>
+                    <p className="text-slate-700">{formatDate(job.finished_at)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Total encontrados</p>
+                    <p className="font-medium text-slate-800">{job.total_encontrados?.toLocaleString('es-AR') ?? '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Nuevos</p>
+                    <p className="font-semibold text-emerald-700">
+                      {job.nuevos_agregados !== undefined ? `+${job.nuevos_agregados.toLocaleString('es-AR')}` : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Progreso</p>
+                    {job.estado === 'corriendo' || job.estado === 'pendiente' ? (
+                      <div className="flex items-center gap-2">
+                        <Progress value={job.progress ?? 0} className="h-1.5 flex-1" />
+                        <span className="text-xs text-slate-500">{job.progress ?? 0}%</span>
+                      </div>
+                    ) : (
+                      <p className="text-slate-700">{job.progress ?? 0}%</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Full detail report — always shown, no click-to-expand */}
+                {job.details && Object.keys(job.details).length > 0 && (
+                  <div className="border-t border-slate-100 pt-3">
+                    <p className="text-xs font-semibold text-slate-500 mb-2">Reporte detallado</p>
+                    {job.tipo === 'enrichment' ? (
+                      <EnrichmentReportGrid details={job.details} />
+                    ) : job.details.sources ? (
+                      <ScraperReportTable sources={job.details.sources} />
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            ))
           )}
         </CardContent>
       </Card>
