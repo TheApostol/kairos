@@ -96,6 +96,60 @@ OVERPASS_BBOXES = {
     "Ushuaia": (-54.84, -68.36, -54.77, -68.25),
 }
 
+# ─────────────────────────────────────────────
+# Ciudad/provincia alias resolution
+# ─────────────────────────────────────────────
+# Lead `ciudad`/`provincia` text comes verbatim from whichever source found
+# it (OSM's addr:city, Páginas Amarillas' addressLocality, Google's
+# formatted address, a typo in someone's OSM edit...), while the curated
+# coverage above is keyed by a single canonical short name ("CABA",
+# "GBA Sur"). An exact string match between the two essentially never
+# happens for the most common case — e.g. "Ciudad Autónoma de Buenos
+# Aires" never equals "CABA" — so without this alias table, the
+# Overpass/Páginas Amarillas cross-reference lookups in the enrichment
+# pipeline silently skip the majority of leads they actually cover.
+# Keys are slugified (see services.scraping_utils.slugify).
+AREA_ALIASES: dict[str, str] = {
+    # CABA — by far the most common case across every source
+    "ciudad-autonoma-de-buenos-aires": "CABA",
+    "cdad-autonoma-de-buenos-aires": "CABA",
+    "ciudad-aurnoma-de-buenos-aires": "CABA",  # "Aurónoma" typo seen in the wild
+    "capital-federal": "CABA",
+    "buenos-aires": "CABA",  # the city (not provincia) named "Buenos Aires" is CABA
+    # GBA sub-regions — sources report the actual partido, not the curated
+    # bbox label, so map the best-known partidos to their sub-region.
+    "san-isidro": "GBA Norte", "vicente-lopez": "GBA Norte", "tigre": "GBA Norte",
+    "san-fernando": "GBA Norte", "pilar": "GBA Norte", "escobar": "GBA Norte",
+    "san-miguel": "GBA Norte", "jose-c-paz": "GBA Norte", "malvinas-argentinas": "GBA Norte",
+    "avellaneda": "GBA Sur", "lanus": "GBA Sur", "lomas-de-zamora": "GBA Sur",
+    "quilmes": "GBA Sur", "berazategui": "GBA Sur", "almirante-brown": "GBA Sur",
+    "esteban-echeverria": "GBA Sur", "florencio-varela": "GBA Sur",
+    "moron": "GBA Oeste", "ituzaingo": "GBA Oeste", "hurlingham": "GBA Oeste",
+    "merlo": "GBA Oeste", "moreno": "GBA Oeste", "la-matanza": "GBA Oeste",
+}
+
+
+def resolve_area_name(ciudad: str = "", provincia: str = "") -> str:
+    """Maps a lead's free-text `ciudad`/`provincia` to the matching curated
+    area name in GEO_TARGETS/OVERPASS_BBOXES (e.g. "CABA", "GBA Sur"), or ""
+    if neither resolves to a covered area. Tries `ciudad` first (more
+    specific), falling back to `provincia` (covers the case where `ciudad`
+    is blank but the lead is still identifiably in a covered area, e.g.
+    provincia="Ciudad Autónoma de Buenos Aires")."""
+    from services.scraping_utils import slugify
+
+    for raw in (ciudad, provincia):
+        slug = slugify(raw)
+        if not slug:
+            continue
+        if slug in AREA_ALIASES:
+            return AREA_ALIASES[slug]
+        for geo in GEO_TARGETS:
+            if slugify(geo["name"]) == slug:
+                return geo["name"]
+    return ""
+
+
 # Shop/amenity tags relevant to the wellness/natural/esoteric niche.
 OVERPASS_TAGS = [
     {"shop": "herbalist"},

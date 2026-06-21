@@ -9,7 +9,7 @@ Overpass requires a modest request rate and an identifying User-Agent
 import re
 from typing import Iterator, Optional
 
-from constants.scraper_targets import GEO_TARGETS, OVERPASS_BBOXES, OVERPASS_TAGS, RUBRO_KEYWORDS
+from constants.scraper_targets import GEO_TARGETS, OVERPASS_BBOXES, OVERPASS_TAGS, RUBRO_KEYWORDS, resolve_area_name
 from services.scraping_utils import RateLimiter, fetch_with_retries, make_lead_record, slugify
 from . import register_source
 
@@ -52,27 +52,24 @@ def _rubro_from_tags(tags: dict) -> str:
     return "OpenStreetMap"
 
 
-def _bbox_for_ciudad(ciudad: str) -> Optional[tuple[float, float, float, float]]:
-    ciudad_norm = slugify(ciudad)
-    if not ciudad_norm:
+def _bbox_for_lead(ciudad: str, provincia: str = "") -> Optional[tuple[float, float, float, float]]:
+    area_name = resolve_area_name(ciudad, provincia)
+    if not area_name:
         return None
-    for area_name, bbox in OVERPASS_BBOXES.items():
-        if slugify(area_name) == ciudad_norm:
-            return bbox
-    return None
+    return OVERPASS_BBOXES.get(area_name)
 
 
 def search_by_name(empresa: str, ciudad: str = "", provincia: str = "") -> Optional[dict]:
     """Cross-references a lead against OpenStreetMap via a narrow,
     single-bbox Overpass query for the exact business name. Overpass has no
     free-text-by-name search without a bounding box, so this only works for
-    leads whose ciudad matches one of the curated OVERPASS_BBOXES (a handful
-    of major commercial cities) — leads elsewhere return None without making
-    a network call."""
+    leads whose ciudad/provincia resolves (via `resolve_area_name`) to one of
+    the curated OVERPASS_BBOXES (a handful of major commercial cities) —
+    leads elsewhere return None without making a network call."""
     if not empresa:
         return None
 
-    bbox = _bbox_for_ciudad(ciudad)
+    bbox = _bbox_for_lead(ciudad, provincia)
     if not bbox:
         return None
 

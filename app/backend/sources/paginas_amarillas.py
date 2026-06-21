@@ -11,7 +11,7 @@ import json
 import re
 from typing import Iterator, Optional
 
-from constants.scraper_targets import GEO_TARGETS, build_freetext_queries
+from constants.scraper_targets import GEO_TARGETS, build_freetext_queries, resolve_area_name
 from services.scraping_utils import (
     GENERIC_BUSINESS_WORDS,
     RateLimiter,
@@ -153,15 +153,18 @@ def _iter_listing_results(category_slug: str, location_slug: str) -> Iterator[di
 
 def _location_slug_for(ciudad: str, provincia: str) -> str:
     """Maps a lead's free-text ciudad/provincia to a PA location slug.
-    Tries an exact (accent/case-insensitive) match against GEO_TARGETS'
-    `name` first, then falls back to slugifying provincia directly — PA
-    accepts province-level slugs (confirmed: e.g. "santa-fe" returns more
-    results than the single-city "rosario" slug), but has no national
-    wildcard, so an empty string means "can't search this lead"."""
-    ciudad_norm = slugify(ciudad)
-    for geo in GEO_TARGETS:
-        if slugify(geo["name"]) == ciudad_norm:
-            return geo["pa_slug"]
+    Tries `resolve_area_name` first (handles full official names/typos/GBA
+    partidos resolving to a curated GEO_TARGETS entry — e.g. "Ciudad
+    Autónoma de Buenos Aires" -> "CABA"), then falls back to slugifying
+    provincia directly — PA accepts province-level slugs (confirmed: e.g.
+    "santa-fe" returns more results than the single-city "rosario" slug),
+    but has no national wildcard, so an empty string means "can't search
+    this lead"."""
+    area_name = resolve_area_name(ciudad, provincia)
+    if area_name:
+        for geo in GEO_TARGETS:
+            if geo["name"] == area_name:
+                return geo["pa_slug"]
     if provincia:
         return slugify(provincia)
     return ""
