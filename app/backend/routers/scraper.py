@@ -1110,6 +1110,12 @@ def start_enrichment(body: EnrichRequest, current_org: OrgContext = Depends(get_
         "status": "pending",
         "job_type": "enrichment",
         "queries": ["enrichment"],
+        # Enrichment doesn't use the `sources` column at all (it's a
+        # scraper-only concept) — set it explicitly to an empty list instead
+        # of leaving it to the DB's `["google_places"]` default, which would
+        # otherwise show up misleadingly as "Fuentes: google_places" in the
+        # job history UI for a job that never touches Google Places.
+        "sources": [],
         "progress": 0,
         "new_found": 0,
         "total_found": 0,
