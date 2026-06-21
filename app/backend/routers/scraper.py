@@ -585,6 +585,22 @@ def _discover_website(empresa: str, ciudad: str, provincia: str = "") -> str:
 # BACKGROUND TASKS
 # ─────────────────────────────────────────────
 
+def _job_is_cancelled(scoped_db: ScopedSupabaseClient, job_id: str) -> bool:
+    """True once `/jobs/{id}/cancel` has flipped this job's row away from
+    "running" — checked periodically inside the scraper/enrichment loops so
+    a cancelled job actually stops instead of running to completion in the
+    background. Without this, the cancel endpoint only updated the DB row;
+    the worker thread (which runs jobs synchronously, one at a time) stayed
+    blocked inside the old job until it finished naturally — sometimes well
+    over an hour, given the rate-limited cross-reference sources — so every
+    job queued after a "cancelled" one just sat stuck in "pendiente"."""
+    try:
+        rows = scoped_db.raw_select("scraper_jobs", {"select": "status", "id": f"eq.{job_id}", "limit": 1})
+        return not rows or rows[0].get("status") != "running"
+    except Exception:
+        return False
+
+
 def _run_scraper_job(
     job_id: str,
     sources: List[str],
@@ -643,6 +659,7 @@ def _run_scraper_job(
             stat = source_stats[source_id]
             stat["status"] = "running"
 
+            cancelled = False
             try:
                 for record in iter_fn(**kwargs):
                     total_found += 1
@@ -667,6 +684,9 @@ def _run_scraper_job(
                         )
 
                     if total_found % 10 == 0:
+                        if _job_is_cancelled(scoped_db, job_id):
+                            cancelled = True
+                            break
                         progress = base_progress
                         if next_progress > base_progress:
                             progress = min(next_progress - 1, base_progress + records_in_source // 3)
@@ -693,6 +713,11 @@ def _run_scraper_job(
                 continue
             else:
                 stat["status"] = "completed"
+
+            if cancelled:
+                # Leave the row exactly as /jobs/{id}/cancel left it
+                # ("failed" + "Cancelado manualmente") — just stop running.
+                return
 
             progress = int(100 * (source_index + 1) / num_sources)
             scoped_db.update("scraper_jobs", job_id, {
@@ -853,7 +878,14 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
 
         scoped_db.update("scraper_jobs", job_id, {"total": total, "total_found": total})
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Not a `with` block: ThreadPoolExecutor.__exit__ calls
+        # shutdown(wait=True), which would block this (single) worker thread
+        # until every already-submitted lead finishes — including on
+        # cancellation, defeating the point. Shut down manually instead so a
+        # cancelled job can return immediately (see `cancelled` below).
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        cancelled = False
+        try:
             futures = {executor.submit(_enrich_one_lead, scoped_db, lead): lead for lead in all_leads}
 
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -879,12 +911,26 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
                     # every single one, to avoid a DB write storm from 5
                     # concurrent workers finishing in quick succession.
                     if completed % 5 == 0 or completed == total:
+                        if _job_is_cancelled(scoped_db, job_id):
+                            cancelled = True
+                            break
                         progress = int((completed / max(total, 1)) * 100)
                         scoped_db.update("scraper_jobs", job_id, {
                             "progress": progress,
                             "new_found": enriched_count,
                             "details": field_stats,
                         })
+        finally:
+            # On cancellation, drop anything not yet started and don't wait
+            # for the (up to 5) already-running leads — they finish and exit
+            # on their own without blocking the worker from picking up the
+            # next pending job.
+            executor.shutdown(wait=not cancelled, cancel_futures=cancelled)
+
+        if cancelled:
+            # Leave the row exactly as /jobs/{id}/cancel left it ("failed" +
+            # "Cancelado manualmente") — just stop running.
+            return
 
         del all_leads
         gc.collect()

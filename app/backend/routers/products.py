@@ -72,8 +72,40 @@ def _pdf_text(value) -> str:
     return _xml_escape(str(value)) if value else ""
 
 
-def _load_pdf_image(imagen_url: str, width, height):
-    """Load a product image for ReportLab. Supports base64 data URLs and http(s) URLs."""
+def _prefetch_images(urls: set) -> dict:
+    """Downloads all unique http(s) product image URLs concurrently.
+
+    A full catalog can have hundreds of products, each with an image — doing
+    one `httpx.get()` per product serially (the previous approach) meant the
+    whole PDF export blocked for one network round trip after another, easily
+    taking minutes and timing out the frontend's fetch. Fetching them all at
+    once via a thread pool turns that into a single, much shorter wait.
+    """
+    import httpx
+
+    results: dict = {}
+    if not urls:
+        return results
+
+    def _fetch(url: str):
+        try:
+            resp = httpx.get(url, timeout=5, follow_redirects=True)
+            if resp.status_code == 200:
+                return url, resp.content
+        except Exception:
+            pass
+        return url, None
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        for url, content in executor.map(_fetch, urls):
+            if content:
+                results[url] = content
+    return results
+
+
+def _load_pdf_image(imagen_url: str, width, height, image_cache: Optional[dict] = None):
+    """Load a product image for ReportLab. Supports base64 data URLs directly,
+    and http(s) URLs via `image_cache` (see `_prefetch_images`)."""
     import base64, io as _io
     try:
         from reportlab.platypus import Image as RLImage
@@ -84,10 +116,9 @@ def _load_pdf_image(imagen_url: str, width, height):
             img_bytes = base64.b64decode(data_part)
             return RLImage(_io.BytesIO(img_bytes), width=width, height=height)
         elif imagen_url.startswith("http"):
-            import httpx
-            resp = httpx.get(imagen_url, timeout=5, follow_redirects=True)
-            if resp.status_code == 200:
-                return RLImage(_io.BytesIO(resp.content), width=width, height=height)
+            img_bytes = (image_cache or {}).get(imagen_url)
+            if img_bytes:
+                return RLImage(_io.BytesIO(img_bytes), width=width, height=height)
     except Exception:
         pass
     return None
@@ -216,6 +247,9 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
         doc.build(story)
         return buffer.getvalue()
 
+    image_urls = {p.get("imagen_url") for p in products if (p.get("imagen_url") or "").startswith("http")}
+    image_cache = _prefetch_images(image_urls)
+
     # Group by category
     categories: dict = {}
     for p in products:
@@ -251,7 +285,7 @@ def _build_pdf_catalog(products: list, titulo: str, incluir_precios: bool) -> by
                 cell_content = []
 
                 img_url = p.get("imagen_url", "")
-                rl_img = _load_pdf_image(img_url, 3*cm, 3*cm)
+                rl_img = _load_pdf_image(img_url, 3*cm, 3*cm, image_cache)
                 if rl_img:
                     cell_content.append(rl_img)
                     cell_content.append(Spacer(1, 0.2 * cm))
