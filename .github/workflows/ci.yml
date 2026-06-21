@@ -1,0 +1,46 @@
+name: Backend Safety Checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tenant-scope-audit:
+    name: Tenant scope audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run tenant scope audit
+        run: python app/backend/tools/audit_tenant_scope.py
+
+  backend-import-smoke:
+    name: Backend import smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: pip install -r app/backend/requirements.txt
+
+      - name: Import FastAPI app
+        working-directory: app/backend
+        env:
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_KEY: dummy-service-key
+          SUPABASE_ANON_KEY: dummy-anon-key
+          SUPABASE_KEY: dummy-service-key
+          ALLOWED_ORIGINS: http://localhost:3000
+        run: python -c "from main import app; print(app.title)"
