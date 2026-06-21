@@ -1,17 +1,30 @@
+import threading
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from routers import leads, scraper, campaigns, orders, products, organizations, public
+import worker
 
-# Scraper/enrichment jobs run in the separate worker process (worker.py),
-# not in this web process — so a web restart/redeploy no longer interrupts
-# them, and this process has nothing to recover on startup. The worker
-# requeues its own orphaned 'running' jobs on its own startup instead.
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Scraper/enrichment jobs run on a background thread inside this same
+    # process (see worker.py) instead of as a FastAPI BackgroundTask tied to
+    # one request — a dedicated Render Background Worker service isn't free,
+    # so job processing stays on this (free) web service instance. On a
+    # deploy/restart, the new process's startup just requeues whatever job
+    # was left "running" and the loop resumes it, instead of losing it.
+    threading.Thread(target=worker.main, daemon=True).start()
+    yield
+
 app = FastAPI(
     title="Kairos CRM API",
     description="Backend API for Kairos CRM",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # The production frontend is always allowed, even if ALLOWED_ORIGINS isn't
