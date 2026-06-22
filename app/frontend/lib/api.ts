@@ -301,7 +301,7 @@ export const SCRAPER_SOURCES = [
   { id: 'google_places', label: 'Google Places', requiresApiKey: true },
 ] as const
 
-export const DEFAULT_SCRAPER_SOURCES = ['green_life', 'overpass', 'datos_gob', 'web_search']
+export const DEFAULT_SCRAPER_SOURCES = ['green_life', 'overpass', 'datos_gob', 'web_search', 'google_places']
 
 export async function getScraperHistory() {
   return apiFetch('/scraper/history')
