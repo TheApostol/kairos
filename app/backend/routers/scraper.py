@@ -728,10 +728,10 @@ def _run_scraper_job(
                 stat["error"] = str(exc)
                 continue
             except PlacesAPIError as exc:
+                logger.warning("Source %r failed: %s", source_id, exc)
                 stat["status"] = "failed"
                 stat["error"] = str(exc)
-                scoped_db.update("scraper_jobs", job_id, {"details": {"sources": source_stats}})
-                raise
+                continue
             except Exception as exc:
                 logger.exception("Source %r failed, continuing with remaining sources", source_id)
                 stat["status"] = "failed"
