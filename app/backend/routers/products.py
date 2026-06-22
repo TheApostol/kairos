@@ -2,7 +2,7 @@ import io
 import re
 import time
 from xml.sax.saxutils import escape as _xml_escape
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -102,14 +102,17 @@ def _decoded_image_bytes(content: bytes) -> Optional[bytes]:
         return None
 
 
-def _prefetch_images(urls: set) -> dict:
-    """Downloads all unique http(s) product image URLs concurrently.
+def _prefetch_images(urls: set, overall_timeout: float = 20.0) -> dict:
+    """Downloads unique http(s) product image URLs concurrently, within a
+    fixed overall time budget.
 
-    A full catalog can have hundreds of products, each with an image — doing
-    one `httpx.get()` per product serially (the previous approach) meant the
-    whole PDF export blocked for one network round trip after another, easily
-    taking minutes and timing out the frontend's fetch. Fetching them all at
-    once via a thread pool turns that into a single, much shorter wait.
+    A full catalog can have hundreds of products, each with an image — at 16
+    workers with a 5s per-request timeout, a "export everything" run on
+    ~500+ products could take minutes, well past Render's request timeout,
+    which silently killed the whole export (no PDF, no error shown). Bounding
+    total wall-clock time and skipping whatever images are still in flight
+    once the budget runs out keeps the export reliable regardless of catalog
+    size, at the cost of some products rendering without an image.
     """
     import httpx
 
@@ -119,17 +122,26 @@ def _prefetch_images(urls: set) -> dict:
 
     def _fetch(url: str):
         try:
-            resp = httpx.get(url, timeout=5, follow_redirects=True, headers=_IMAGE_FETCH_HEADERS)
+            resp = httpx.get(url, timeout=3, follow_redirects=True, headers=_IMAGE_FETCH_HEADERS)
             if resp.status_code == 200:
                 return url, _decoded_image_bytes(resp.content)
         except Exception:
             pass
         return url, None
 
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        for url, content in executor.map(_fetch, urls):
-            if content:
-                results[url] = content
+    executor = ThreadPoolExecutor(max_workers=32)
+    try:
+        futures = {executor.submit(_fetch, url) for url in urls}
+        done, _pending = wait(futures, timeout=overall_timeout)
+        for f in done:
+            try:
+                url, content = f.result()
+                if content:
+                    results[url] = content
+            except Exception:
+                pass
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     return results
 
 
@@ -895,13 +907,15 @@ def _kd_map_product(raw: dict, category: str) -> dict:
 
     # The source's stock entry marks "s_ilimitado" (unlimited/untracked) for
     # most products, with a meaningless s_cantidad of 0 in that case — that's
-    # not the same as confirmed-zero stock, so leave it unset (None) rather
-    # than have it land on the products table's DEFAULT 0 and show as "Sin
-    # stock" on the public catalog.
+    # not the same as confirmed-zero stock. Use the real tracked quantity
+    # when there is one; otherwise default to a flat 100 so untracked/
+    # unlimited products show as available instead of "Sin stock".
     stock_entries = raw.get("stock") or []
-    stock = None
+    stock = 100
     if stock_entries and not stock_entries[0].get("s_ilimitado"):
-        stock = stock_entries[0].get("s_cantidad")
+        real_cantidad = stock_entries[0].get("s_cantidad")
+        if real_cantidad:
+            stock = real_cantidad
 
     return {
         "nombre": raw["p_nombre"],
