@@ -263,6 +263,55 @@ def _infer_instagram(name: str, website: str = "") -> str:
     return f"@{slug[:20]}"
 
 
+def search_by_name(empresa: str, ciudad: str = "", provincia: str = "") -> Optional[dict]:
+    """Cross-references a lead against Google Places via Text Search for its
+    name + location, for use during enrichment. There's no per-request API
+    key in that pipeline (it runs in a background worker), so this reads
+    `settings.GOOGLE_API_KEY` directly — and no-ops without a network call
+    if that's unset, so it's safe to include unconditionally."""
+    from config import settings
+
+    api_key = settings.GOOGLE_API_KEY
+    if not api_key or not empresa:
+        return None
+
+    query = " ".join(filter(None, [empresa, ciudad, provincia]))
+    try:
+        data = _places_text_search(api_key, query)
+    except Exception:
+        return None
+
+    places = data.get("results", [])
+    if not places:
+        return None
+
+    place = places[0]
+    pid = place.get("place_id")
+    if not pid:
+        return None
+
+    try:
+        details = _place_details(api_key, pid)
+    except Exception:
+        return None
+
+    addr_comps = details.get("address_components", [])
+    phone = details.get("formatted_phone_number", "") or details.get("international_phone_number", "")
+    website = details.get("website", "")
+
+    return {
+        "empresa": details.get("name", place.get("name", empresa)),
+        "direccion": details.get("formatted_address", ""),
+        "ciudad": _extract_city(addr_comps) or ciudad,
+        "provincia": _extract_province(addr_comps) or provincia,
+        "telefono": phone,
+        "website": website,
+        "google_maps_url": details.get("url", ""),
+        "instagram": _infer_instagram(place.get("name", ""), website),
+        "whatsapp": phone.replace(" ", "").replace("-", "").replace("+", "") if phone else "",
+    }
+
+
 @register_source("google_places")
 def iter_leads(
     *,

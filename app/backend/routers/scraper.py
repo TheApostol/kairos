@@ -20,6 +20,7 @@ from sources import SOURCE_REGISTRY, DEFAULT_SOURCES
 from sources.google_places import DEFAULT_QUERIES, MAYORISTA_QUERIES, PlacesAPIError
 from sources.paginas_amarillas import search_by_name as pa_search_by_name
 from sources.overpass import search_by_name as overpass_search_by_name
+from sources.google_places import search_by_name as google_places_search_by_name
 from config import settings
 
 router = APIRouter(prefix="/scraper", tags=["scraper"])
@@ -746,11 +747,11 @@ def _run_scraper_job(
 
 
 # Cross-reference sources consulted, in priority order, for whatever fields
-# are still missing after the website-discovery/scrape pass below — every
-# free directory source except google_places (which this pipeline never
-# uses). Each is cheap to skip: pa_search_by_name returns fast without a
-# resolvable location, overpass_search_by_name without a covered city.
-_CROSS_REFERENCE_SOURCES = [pa_search_by_name, overpass_search_by_name]
+# are still missing after the website-discovery/scrape pass below. The free
+# directory sources run first since they're free to call; google_places goes
+# last and silently no-ops without a network call if GOOGLE_API_KEY isn't
+# configured, so it's safe to leave in this list unconditionally.
+_CROSS_REFERENCE_SOURCES = [pa_search_by_name, overpass_search_by_name, google_places_search_by_name]
 _CROSS_REFERENCE_FIELDS = (
     "website", "email", "instagram", "whatsapp", "telefono", "direccion", "ciudad", "provincia",
 )
@@ -965,10 +966,16 @@ def start_scraper(body: ScraperStartRequest, current_org: OrgContext = Depends(g
     # only has access to settings.GOOGLE_API_KEY (an env var) — not to this
     # request's body — so a per-request API key isn't persisted or supported.
     if "google_places" in sources and not settings.GOOGLE_API_KEY:
-        raise HTTPException(
-            status_code=400,
-            detail="Google API key required for the google_places source. Set the GOOGLE_API_KEY env var.",
-        )
+        if body.sources is not None:
+            # Explicitly requested — fail loudly so the caller knows why.
+            raise HTTPException(
+                status_code=400,
+                detail="Google API key required for the google_places source. Set the GOOGLE_API_KEY env var.",
+            )
+        # Came in only via DEFAULT_SOURCES — drop it silently so default runs
+        # keep working before a key is configured; it activates automatically
+        # once GOOGLE_API_KEY is set, no other change needed.
+        sources = [s for s in sources if s != "google_places"]
 
     # Auto-fail any stuck jobs before checking for conflicts
     stuck = current_org.db.raw_select("scraper_jobs", {"select": "id,status,started_at,created_at", "status": "in.(pending,running)", "limit": 10})
