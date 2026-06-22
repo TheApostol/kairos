@@ -31,7 +31,7 @@ ALLOWED_RAW_DB_FILES = {
     "platform.py",        # platform admin router; protected by platform_admins, not tenant membership
 }
 
-RAW_DB_CALL_RE = re.compile(r"(?<![A-Za-z0-9_])db\.(select|select_all|raw_select|insert|update|delete|count)\(")
+RAW_DB_CALL_RE = re.compile(r"(?<![A-Za-z0-9_.])db\.(select|select_all|raw_select|insert|update|delete|count)\(")
 SCOPED_CLIENT_RE = re.compile(r"ScopedSupabaseClient\(\s*db\s*,")
 
 

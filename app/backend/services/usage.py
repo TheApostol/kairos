@@ -4,7 +4,7 @@ from typing import Any, Optional
 from datetime import datetime, timezone
 
 from services.auth import OrgContext
-from services.supabase_client import db
+from services.supabase_client import db, ScopedSupabaseClient
 
 
 def record_usage(
@@ -23,8 +23,7 @@ def record_usage(
     user action, so exceptions are swallowed intentionally.
     """
     try:
-        db.insert("usage_events", {
-            "organization_id": org.organization_id,
+        org.db.insert("usage_events", {
             "actor_user_id": org.user_id,
             "metric": metric,
             "quantity": quantity,
@@ -39,14 +38,11 @@ def record_usage(
 
 
 def get_current_usage(organization_id: str, metric: str, since_iso: Optional[str] = None) -> int:
-    filters = {
-        "organization_id": f"eq.{organization_id}",
-        "metric": f"eq.{metric}",
-    }
+    filters = {"metric": f"eq.{metric}"}
     if since_iso:
         filters["created_at"] = f"gte.{since_iso}"
     try:
-        events = db.select_all("usage_events", filters=filters, select_cols="quantity")
+        events = ScopedSupabaseClient(db, organization_id).select_all("usage_events", filters=filters, select_cols="quantity")
         return sum(int(e.get("quantity") or 0) for e in events)
     except Exception:
         return 0
