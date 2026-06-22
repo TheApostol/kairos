@@ -86,18 +86,27 @@ _IMAGE_FETCH_HEADERS = {
 
 
 def _decoded_image_bytes(content: bytes) -> Optional[bytes]:
-    """Verifies `content` is actually decodable image data before it's handed
-    to ReportLab. `reportlab.platypus.Image` only decodes lazily at
-    `doc.build()` time — by then there's no try/except around it, so a
-    single corrupt/non-image response (e.g. a CDN's 200 OK HTML error page)
-    would crash the *entire* catalog export instead of just skipping that
-    one image."""
+    """Verifies `content` is decodable image data, then downscales it to the
+    size actually rendered in the PDF (products are embedded at 3cm). Product
+    photos straight from the source CDN can be several MB at full resolution
+    — embedding ~500 of those unresized produced 150MB+ PDFs that took over a
+    minute to build and reliably failed to download/open. `reportlab.platypus.
+    Image` only decodes lazily at `doc.build()` time — by then there's no
+    try/except around it, so a single corrupt/non-image response (e.g. a
+    CDN's 200 OK HTML error page) would crash the *entire* catalog export
+    instead of just skipping that one image."""
     try:
         from PIL import Image as PILImage
         import io as _io
         with PILImage.open(_io.BytesIO(content)) as img:
             img.verify()
-        return content
+        # verify() invalidates the image for further use, so re-open fresh.
+        with PILImage.open(_io.BytesIO(content)) as img:
+            img = img.convert("RGB")
+            img.thumbnail((400, 400))
+            out = _io.BytesIO()
+            img.save(out, format="JPEG", quality=75)
+            return out.getvalue()
     except Exception:
         return None
 
