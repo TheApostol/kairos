@@ -324,6 +324,11 @@ def duplicate_campaign(campaign_id: str, current_org: OrgContext = Depends(get_c
     return new_campaign
 
 
+@router.get("/ai-status")
+def get_ai_status():
+    return {"available": bool(settings.ANTHROPIC_API_KEY)}
+
+
 @router.get("/stats")
 def get_campaigns_stats(current_org: OrgContext = Depends(get_current_org)):
     campaigns = current_org.db.select("campaigns", limit=1000)
@@ -507,26 +512,35 @@ Consideraciones:
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2000,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
 
     raw_text = message.content[0].text.strip()
+    # Claude sometimes wraps the JSON in a markdown code fence despite being
+    # told not to ("sin markdown") — strip it before attempting to parse.
+    fenced = re.match(r"^```(?:json)?\s*(.*)\s*```$", raw_text, re.DOTALL)
+    if fenced:
+        raw_text = fenced.group(1).strip()
+
+    fallback_result = {
+        "asunto": "Propuesta especial para tu negocio",
+        "cuerpo": raw_text,
+        "cuerpo_html": f"<p>{raw_text}</p>",
+        "followup_1": "",
+        "followup_2": "",
+    }
 
     try:
         result = json.loads(raw_text)
     except json.JSONDecodeError:
-        import re
         json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
         if json_match:
-            result = json.loads(json_match.group())
+            try:
+                result = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                result = fallback_result
         else:
-            result = {
-                "asunto": "Propuesta especial para tu negocio",
-                "cuerpo": raw_text,
-                "cuerpo_html": f"<p>{raw_text}</p>",
-                "followup_1": "",
-                "followup_2": "",
-            }
+            result = fallback_result
 
     return result
