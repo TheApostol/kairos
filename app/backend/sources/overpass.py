@@ -10,7 +10,7 @@ import re
 from typing import Iterator, Optional
 
 from constants.scraper_targets import GEO_TARGETS, OVERPASS_BBOXES, OVERPASS_TAGS, RUBRO_KEYWORDS, resolve_area_name
-from services.scraping_utils import RateLimiter, fetch_with_retries, make_lead_record, slugify
+from services.scraping_utils import RateLimiter, fetch_with_retries, make_lead_record
 from . import register_source
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
