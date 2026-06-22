@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS campaigns (
   cuerpo         text,
   cuerpo_html    text,
   segmento       jsonb,                 -- filtros aplicados {rubro, provincia, score_min, ...}
+  followup_1     text,                  -- seguimiento a los 3 días sin apertura
+  followup_2     text,                  -- seguimiento a los 7 días sin apertura
   total_leads    integer DEFAULT 0,
   enviados       integer DEFAULT 0,
   abiertos       integer DEFAULT 0,
@@ -142,7 +144,8 @@ CREATE TABLE IF NOT EXISTS campaign_sends (
   campaign_id  uuid NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
   lead_id      uuid REFERENCES leads(id) ON DELETE SET NULL,
   estado       text DEFAULT 'pendiente'
-               CHECK (estado IN ('pendiente','enviado','abierto','click','respondido','error')),
+               CHECK (estado IN ('pendiente','enviado','abierto','click','respondido','error','followup_1_enviado','followup_2_enviado')),
+  send_type    text DEFAULT 'initial',  -- 'initial' | 'followup_1' | 'followup_2'
   email_dest   text,
   error_msg    text,
   enviado_at   timestamptz,

@@ -176,6 +176,24 @@ def _normalize_phone(raw: str, keep_plus: bool = True) -> str:
     return digits
 
 
+def _reassemble_split_emails(soup) -> list:
+    """Some sites split an email across sibling inline elements to dodge
+    scrapers, e.g. <span>info</span><span>@</span><span>empresa.com</span> —
+    EMAIL_REGEX never matches because no single text node contains the full
+    address. Walk every parent of a bare "@" text node and re-run the regex
+    against its concatenated text instead."""
+    found = []
+    for at_node in soup.find_all(string=re.compile(r"@")):
+        parent = at_node.parent
+        if parent is None:
+            continue
+        joined = parent.get_text(separator="")
+        for e in EMAIL_REGEX.findall(joined):
+            if _is_valid_email(e) and e not in found:
+                found.append(e)
+    return found
+
+
 def _extract_from_soup(soup, result: dict) -> None:
     """Extract contact info using BeautifulSoup from parsed HTML."""
 
@@ -386,6 +404,13 @@ def _extract_from_soup(soup, result: dict) -> None:
         valid = [e for e in emails if _is_valid_email(e)]
         if valid:
             result["email"] = valid[0]
+
+    # 6b. Split-email reassembly — catches addresses broken across sibling
+    # <span> tags (a pattern some sites use specifically to dodge scrapers).
+    if not result["email"]:
+        reassembled = _reassemble_split_emails(soup)
+        if reassembled:
+            result["email"] = reassembled[0]
 
     # 7. Phone: scan tel: hrefs then full-text PHONE_TEXT_REGEX
     full_html = str(soup)
