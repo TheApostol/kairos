@@ -4,6 +4,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import Response as RawResponse
 from pydantic import BaseModel
 
 from services.auth import OrgContext, get_current_org
@@ -24,6 +25,8 @@ class CampaignCreate(BaseModel):
     cuerpo: str
     cuerpo_html: Optional[str] = None
     segmento: Optional[dict] = None
+    followup_1: Optional[str] = None
+    followup_2: Optional[str] = None
 
 
 class GenerateTextRequest(BaseModel):
@@ -121,36 +124,54 @@ def _execute_campaign(campaign_id: str, org_id: str):
             if email_dest.lower() in seen_emails:
                 continue
             seen_emails.add(email_dest.lower())
+
+        now_str = datetime.now(timezone.utc).isoformat()
         send_record = {
             "campaign_id": campaign_id,
             "lead_id": lead.get("id"),
             "estado": "pendiente",
             "email_dest": email_dest,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "send_type": "initial",
+            "created_at": now_str,
         }
 
+        # Insert first to get an id — the tracking pixel URL needs it before
+        # the send itself happens.
+        inserted_send = scoped_db.insert("campaign_sends", send_record)
+        send_id = str(inserted_send.get("id", ""))
+
         if campaign.get("tipo") == "email" and email_dest:
+            html_body = _personalize(campaign.get("cuerpo_html") or "", lead)
+            text_body = _personalize(campaign.get("cuerpo") or "", lead)
+            subject = _personalize(campaign.get("asunto") or "", lead)
+
+            if send_id and html_body:
+                tracking_url = f"{settings.BACKEND_URL}/campaigns/track/{campaign_id}/{send_id}"
+                pixel = f'<img src="{tracking_url}" width="1" height="1" alt="" style="display:none">'
+                html_body = html_body + pixel
+
             result = _send_email_brevo(
                 to_email=email_dest,
                 to_name=lead.get("empresa", ""),
-                subject=campaign.get("asunto", ""),
-                html_body=campaign.get("cuerpo_html", ""),
-                text_body=campaign.get("cuerpo", ""),
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
             )
             if result.get("success"):
-                send_record["estado"] = "enviado"
-                send_record["enviado_at"] = datetime.now(timezone.utc).isoformat()
+                update_data: dict = {"estado": "enviado", "enviado_at": now_str}
                 enviados += 1
             else:
-                send_record["estado"] = "error"
-                send_record["error_msg"] = result.get("error", "Unknown error")[:500]
+                update_data = {
+                    "estado": "error",
+                    "error_msg": result.get("error", "Unknown error")[:500],
+                }
                 errors += 1
         else:
-            send_record["estado"] = "enviado"
-            send_record["enviado_at"] = datetime.now(timezone.utc).isoformat()
+            update_data = {"estado": "enviado", "enviado_at": now_str}
             enviados += 1
 
-        scoped_db.insert("campaign_sends", send_record)
+        if send_id:
+            scoped_db.update("campaign_sends", send_id, update_data)
 
     scoped_db.update("campaigns", campaign_id, {
         "estado": "completada",
@@ -163,6 +184,7 @@ def _execute_campaign(campaign_id: str, org_id: str):
 def _personalize(template: str, lead: dict) -> str:
     return (
         template
+        .replace("{nombre}", lead.get("empresa") or "")
         .replace("{empresa}", lead.get("empresa") or "")
         .replace("{ciudad}", lead.get("ciudad") or "")
         .replace("{provincia}", lead.get("provincia") or "")
@@ -186,9 +208,186 @@ def _run_quick_email(leads: list, asunto: str, cuerpo: str):
         )
 
 
+def _run_process_followups(org_id: str):
+    scoped_db = ScopedSupabaseClient(db, org_id)
+    now = datetime.now(timezone.utc)
+    cutoff_3d = (now - timedelta(days=3)).isoformat()
+    cutoff_7d = (now - timedelta(days=7)).isoformat()
+
+    # --- 3-day followups: initial sends with no response after 3 days ---
+    sends_3d = scoped_db.raw_select("campaign_sends", {
+        "select": "id,campaign_id,lead_id,email_dest,enviado_at",
+        "estado": "eq.enviado",
+        "send_type": "eq.initial",
+        "enviado_at": f"lte.{cutoff_3d}",
+        "limit": 500,
+    })
+
+    for send in sends_3d:
+        campaign_id = send.get("campaign_id")
+        if not campaign_id:
+            continue
+        camps = scoped_db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+        if not camps:
+            continue
+        campaign = camps[0]
+        followup_1 = (campaign.get("followup_1") or "").strip()
+        if not followup_1:
+            continue
+        email = send.get("email_dest", "")
+        if not email:
+            continue
+        lead_id = send.get("lead_id")
+        lead: dict = {}
+        if lead_id:
+            leads = scoped_db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
+            if leads:
+                lead = leads[0]
+        text_body = _personalize(followup_1, lead)
+        html_body = "<p>" + text_body.replace("\n", "<br>") + "</p>"
+        _send_email_brevo(
+            to_email=email,
+            to_name=lead.get("empresa", ""),
+            subject=f"Seguimiento: {campaign.get('asunto', 'Propuesta Kairos')}",
+            html_body=html_body,
+            text_body=text_body,
+        )
+        try:
+            scoped_db.update("campaign_sends", send["id"], {"estado": "followup_1_enviado"})
+        except Exception:
+            pass
+
+    # --- 7-day followups: sends that got followup_1 but still no response ---
+    sends_7d = scoped_db.raw_select("campaign_sends", {
+        "select": "id,campaign_id,lead_id,email_dest,enviado_at",
+        "estado": "eq.followup_1_enviado",
+        "enviado_at": f"lte.{cutoff_7d}",
+        "limit": 500,
+    })
+
+    for send in sends_7d:
+        campaign_id = send.get("campaign_id")
+        if not campaign_id:
+            continue
+        camps = scoped_db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+        if not camps:
+            continue
+        campaign = camps[0]
+        followup_2 = (campaign.get("followup_2") or "").strip()
+        if not followup_2:
+            continue
+        email = send.get("email_dest", "")
+        if not email:
+            continue
+        lead_id = send.get("lead_id")
+        lead = {}
+        if lead_id:
+            leads = scoped_db.select("leads", filters={"id": f"eq.{lead_id}"}, limit=1)
+            if leads:
+                lead = leads[0]
+        text_body = _personalize(followup_2, lead)
+        html_body = "<p>" + text_body.replace("\n", "<br>") + "</p>"
+        _send_email_brevo(
+            to_email=email,
+            to_name=lead.get("empresa", ""),
+            subject=f"Último contacto: {campaign.get('asunto', 'Propuesta Kairos')}",
+            html_body=html_body,
+            text_body=text_body,
+        )
+        try:
+            scoped_db.update("campaign_sends", send["id"], {"estado": "followup_2_enviado"})
+        except Exception:
+            pass
+
+
 # ─────────────────────────────────────────────
 # ROUTES
 # ─────────────────────────────────────────────
+
+@router.get("/track/{campaign_id}/{send_id}")
+def track_open(campaign_id: str, send_id: str):
+    """Email open tracking pixel — loaded by the recipient's email client with
+    no auth context, so this uses the global `db` directly rather than an
+    org-scoped client; it only flips a flag and increments a counter, no
+    lead/campaign data is read back to the caller."""
+    try:
+        sends = db.select("campaign_sends", filters={"id": f"eq.{send_id}", "campaign_id": f"eq.{campaign_id}"}, limit=1)
+        if sends and not sends[0].get("abierto_at"):
+            now_str = datetime.now(timezone.utc).isoformat()
+            db.update("campaign_sends", send_id, {"abierto_at": now_str, "estado": "abierto"})
+            camps = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
+            if camps:
+                current = int(camps[0].get("abiertos") or 0)
+                db.update("campaigns", campaign_id, {"abiertos": current + 1})
+    except Exception:
+        pass
+    # 1x1 transparent GIF
+    gif = (
+        b"\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00"
+        b"\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00"
+        b"\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02"
+        b"\x44\x01\x00\x3b"
+    )
+    return RawResponse(content=gif, media_type="image/gif",
+                       headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
+
+@router.post("/process-followups")
+def process_followups(background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
+    """Send scheduled followup_1/followup_2 emails for this org's unopened/unanswered campaign sends."""
+    background_tasks.add_task(_run_process_followups, current_org.organization_id)
+    return {"message": "Procesando seguimientos en segundo plano"}
+
+
+@router.post("/send-reengagement")
+def send_reengagement(background_tasks: BackgroundTasks, dias_inactivo: int = 30, current_org: OrgContext = Depends(get_current_org)):
+    """Send re-engagement emails to clients with no order in `dias_inactivo` days."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=dias_inactivo)).isoformat()
+
+    clientes = current_org.db.select(
+        "leads",
+        filters={"estado": "eq.cliente"},
+        select_cols="id,empresa,email,ciudad,provincia",
+        limit=5000,
+    )
+    clientes_con_email = [c for c in clientes if c.get("email")]
+
+    dormant = []
+    for lead in clientes_con_email:
+        lid = lead.get("id")
+        recent = current_org.db.raw_select("orders", {
+            "select": "id,created_at",
+            "lead_id": f"eq.{lid}",
+            "order": "created_at.desc",
+            "limit": "1",
+        })
+        if not recent or (recent[0].get("created_at") or "") < cutoff:
+            dormant.append(lead)
+
+    if not dormant:
+        return {"message": "No hay clientes dormidos", "queued": 0}
+
+    cuerpo = (
+        "Hola {empresa},\n\n"
+        "¡Hace un tiempo que no sabemos de vos! Queremos contarte que tenemos "
+        "novedades en nuestro catálogo con nuevos productos y precios actualizados.\n\n"
+        "Si querés retomar el contacto o conocer nuestras últimas propuestas, "
+        "respondé este email o contactanos directamente.\n\n"
+        "¡Esperamos verte pronto!\nEquipo Kairos"
+    )
+
+    background_tasks.add_task(
+        _run_quick_email,
+        dormant,
+        "¡Te extrañamos! Novedades Kairos para vos",
+        cuerpo,
+    )
+    return {
+        "queued": len(dormant),
+        "message": f"Enviando reactivación a {len(dormant)} clientes",
+        "dias_inactivo": dias_inactivo,
+    }
+
 
 @router.post("/quick-send")
 def quick_send_leads(body: QuickSendRequest, background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):
@@ -311,6 +510,8 @@ def duplicate_campaign(campaign_id: str, current_org: OrgContext = Depends(get_c
         "cuerpo": original.get("cuerpo"),
         "cuerpo_html": original.get("cuerpo_html"),
         "segmento": original.get("segmento"),
+        "followup_1": original.get("followup_1"),
+        "followup_2": original.get("followup_2"),
         "total_leads": 0,
         "enviados": 0,
         "abiertos": 0,
@@ -364,6 +565,8 @@ def create_campaign(body: CampaignCreate, current_org: OrgContext = Depends(get_
         "cuerpo": body.cuerpo,
         "cuerpo_html": body.cuerpo_html,
         "segmento": body.segmento,
+        "followup_1": body.followup_1,
+        "followup_2": body.followup_2,
         "total_leads": 0,
         "enviados": 0,
         "abiertos": 0,
