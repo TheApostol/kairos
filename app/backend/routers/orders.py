@@ -248,11 +248,14 @@ def get_orders_stats(current_org: OrgContext = Depends(get_current_org)):
             lead_totals[lid] = lead_totals.get(lid, 0.0) + t
 
     top_lead_ids = sorted(lead_totals, key=lambda k: lead_totals[k], reverse=True)[:5]
-    top_clientes = []
-    for lid in top_lead_ids:
-        rows = current_org.db.select("leads", filters={"id": f"eq.{lid}"}, select_cols="id,empresa", limit=1)
-        empresa = rows[0].get("empresa", f"Lead #{lid}") if rows else f"Lead #{lid}"
-        top_clientes.append({"lead_id": lid, "empresa": empresa, "total": round(lead_totals[lid], 2)})
+    top_lead_rows = current_org.db.select(
+        "leads", filters={"id": f"in.({','.join(str(lid) for lid in top_lead_ids)})"}, select_cols="id,empresa",
+    ) if top_lead_ids else []
+    top_lead_empresas = {str(row["id"]): row.get("empresa") for row in top_lead_rows}
+    top_clientes = [
+        {"lead_id": lid, "empresa": top_lead_empresas.get(str(lid), f"Lead #{lid}"), "total": round(lead_totals[lid], 2)}
+        for lid in top_lead_ids
+    ]
 
     # Top products by revenue from order_items
     try:
@@ -361,10 +364,10 @@ def list_orders(
     lead_ids = list({o["lead_id"] for o in orders if o.get("lead_id")})
     empresa_map: dict = {}
     if lead_ids:
-        for lid in lead_ids:
-            rows = current_org.db.select("leads", filters={"id": f"eq.{lid}"}, select_cols="id,empresa", limit=1)
-            if rows:
-                empresa_map[str(rows[0]["id"])] = rows[0].get("empresa")
+        rows = current_org.db.select(
+            "leads", filters={"id": f"in.({','.join(str(lid) for lid in lead_ids)})"}, select_cols="id,empresa",
+        )
+        empresa_map = {str(row["id"]): row.get("empresa") for row in rows}
     for o in orders:
         if o.get("lead_id"):
             o["empresa"] = empresa_map.get(str(o["lead_id"]))

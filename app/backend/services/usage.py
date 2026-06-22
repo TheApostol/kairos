@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 from datetime import datetime, timezone
 
 from services.auth import OrgContext
 from services.supabase_client import db, ScopedSupabaseClient
+
+logger = logging.getLogger(__name__)
 
 
 def record_usage(
@@ -34,7 +37,7 @@ def record_usage(
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception:
-        pass
+        logger.exception("Failed to record usage event: org=%s metric=%s", org.organization_id, metric)
 
 
 def get_current_usage(organization_id: str, metric: str, since_iso: Optional[str] = None) -> int:
@@ -45,4 +48,5 @@ def get_current_usage(organization_id: str, metric: str, since_iso: Optional[str
         events = ScopedSupabaseClient(db, organization_id).select_all("usage_events", filters=filters, select_cols="quantity")
         return sum(int(e.get("quantity") or 0) for e in events)
     except Exception:
+        logger.exception("Failed to read usage events: org=%s metric=%s", organization_id, metric)
         return 0

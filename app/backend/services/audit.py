@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 from fastapi import Request
 
 from services.auth import OrgContext
 from services.supabase_client import db
+
+logger = logging.getLogger(__name__)
 
 
 def _request_meta(request: Optional[Request]) -> tuple[str, str]:
@@ -46,4 +49,4 @@ def write_audit_log(
             "metadata": metadata or {},
         })
     except Exception:
-        pass
+        logger.exception("Failed to write audit log: action=%s org=%s", action, org.organization_id if org else None)
