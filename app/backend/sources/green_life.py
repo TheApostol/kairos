@@ -8,6 +8,7 @@ Iterates the site's WordPress sitemap (`business-sitemap{1..N}.xml`) for
 
 import html
 import json
+import random
 import re
 from typing import Iterator, Optional
 
@@ -28,12 +29,21 @@ _POSTAL_CODE_PREFIX = re.compile(r"^[A-Z]?\d{4}[A-Z]{0,3}\s+")
 
 
 def _iter_business_sitemaps() -> Iterator[str]:
+    """Yields business-sitemap URLs in random order.
+
+    `iter_leads` stops after `max_records` detail pages, and the site has
+    ~12K listings across many sitemap files — always visiting them in the
+    same (index) order meant every run re-scraped the exact same first
+    `max_records` businesses forever, never finding anything new. Shuffling
+    which sitemap we start from lets repeated runs sample different parts
+    of the catalog over time.
+    """
     resp = fetch_with_retries(SITEMAP_INDEX_URL, rate_limiter=_rate_limiter)
     if resp is None or resp.status_code != 200:
         return
-    for loc in _LOC_PATTERN.findall(resp.text):
-        if "business-sitemap" in loc:
-            yield loc
+    sitemaps = [loc for loc in _LOC_PATTERN.findall(resp.text) if "business-sitemap" in loc]
+    random.shuffle(sitemaps)
+    yield from sitemaps
 
 
 def _iter_detail_urls() -> Iterator[str]:
@@ -41,9 +51,9 @@ def _iter_detail_urls() -> Iterator[str]:
         resp = fetch_with_retries(sitemap_url, rate_limiter=_rate_limiter)
         if resp is None or resp.status_code != 200:
             continue
-        for loc in _LOC_PATTERN.findall(resp.text):
-            if _DETAIL_PATTERN.match(loc):
-                yield loc
+        detail_urls = [loc for loc in _LOC_PATTERN.findall(resp.text) if _DETAIL_PATTERN.match(loc)]
+        random.shuffle(detail_urls)
+        yield from detail_urls
 
 
 def _parse_street_address(street_address: str) -> tuple[str, str, str]:

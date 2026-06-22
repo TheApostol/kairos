@@ -890,12 +890,27 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             # common case for green_life/overpass/datos_gob sources) still
             # need to go through this loop so the by-name DDG discovery
             # below gets a chance to find one.
-            all_leads = scoped_db.raw_select("leads", {
-                "select": "id,empresa,website,email,telefono,instagram,whatsapp,ciudad,provincia,direccion",
-                "or": "(email.is.null,email.eq.)",
-                "order": "id.asc",
-                "limit": 5000,
-            })
+            #
+            # Supabase's PostgREST clamps any single request to its
+            # configured max-rows (1000) regardless of the `limit`/Range
+            # requested, so a request for "limit: 5000" silently came back
+            # truncated at 1000 — paginate in <=1000-row pages instead so the
+            # full backlog actually gets processed.
+            all_leads = []
+            offset = 0
+            page_size = 1000
+            while True:
+                page = scoped_db.raw_select("leads", {
+                    "select": "id,empresa,website,email,telefono,instagram,whatsapp,ciudad,provincia,direccion",
+                    "or": "(email.is.null,email.eq.)",
+                    "order": "id.asc",
+                    "limit": page_size,
+                    "offset": offset,
+                })
+                all_leads.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
 
         total = len(all_leads)
         enriched_count = 0
