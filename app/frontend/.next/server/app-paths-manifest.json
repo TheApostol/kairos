@@ -1,7 +1,7 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
-  "/campaigns/[id]/page": "app/campaigns/[id]/page.js",
   "/accept-invite/page": "app/accept-invite/page.js",
+  "/campaigns/[id]/page": "app/campaigns/[id]/page.js",
   "/campaigns/new/page": "app/campaigns/new/page.js",
   "/campaigns/page": "app/campaigns/page.js",
   "/catalog/page": "app/catalog/page.js",
@@ -12,10 +12,10 @@
   "/onboarding/page": "app/onboarding/page.js",
   "/orders/[id]/page": "app/orders/[id]/page.js",
   "/orders/page": "app/orders/page.js",
-  "/pipeline/page": "app/pipeline/page.js",
   "/page": "app/page.js",
-  "/signup/page": "app/signup/page.js",
+  "/pipeline/page": "app/pipeline/page.js",
   "/scraper/page": "app/scraper/page.js",
+  "/signup/page": "app/signup/page.js",
   "/team/page": "app/team/page.js",
   "/public/catalog/page": "app/public/catalog/page.js"
 }

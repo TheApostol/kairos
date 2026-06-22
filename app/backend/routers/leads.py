@@ -2,12 +2,15 @@ import csv
 import io
 import math
 from typing import Optional
-from fastapi import APIRouter, Query, HTTPException, UploadFile, File, Depends
+from fastapi import APIRouter, Query, HTTPException, UploadFile, File, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from datetime import datetime
 
 from services.auth import OrgContext, get_current_org
+from services.audit import write_audit_log
+from services.billing import assert_plan_allows
+from services.usage import record_usage
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -35,8 +38,6 @@ class NoteCreate(BaseModel):
     text: str
 
 
-# Ordering used by the "closeness to closing" sort: leads that are further
-# along the pipeline (but not yet won/lost) are surfaced first.
 ESTADO_CLOSENESS_RANK = {
     "interesado": 0,
     "contactado": 1,
@@ -45,9 +46,6 @@ ESTADO_CLOSENESS_RANK = {
     "descartado": 4,
 }
 
-# Maps a `sort` query value to a PostgREST `order` clause. "cercania" is
-# handled separately since it requires sorting by pipeline-stage proximity,
-# which PostgREST can't express directly.
 SORT_ORDERS = {
     "recientes": "created_at.desc",
     "score_desc": "score_ia.desc.nullslast",
@@ -67,7 +65,7 @@ def _build_filters(
     score_min: Optional[float],
     score_max: Optional[float],
     tipo_cliente: Optional[str] = None,
-    sort: Optional[str] = None,
+    sort: Optional[str] = None
 ) -> dict:
     order = SORT_ORDERS.get(sort, SORT_ORDERS["recientes"])
     params: dict = {"select": "*", "order": order}
@@ -121,14 +119,10 @@ def list_leads(
     current_org: OrgContext = Depends(get_current_org),
 ):
     params = _build_filters(empresa, rubro, provincia, ciudad, estado, con_email, con_telefono, score_min, score_max, tipo_cliente, sort)
-
-    # Count with same filters (excluding pagination params)
     count_filters = {k: v for k, v in params.items() if k not in ("select", "order")}
     total = current_org.db.count("leads", count_filters) if count_filters else current_org.db.count("leads")
 
     if sort == "cercania":
-        # PostgREST can't order by pipeline-stage proximity directly, so fetch
-        # the filtered set (capped) and sort/paginate in Python.
         fetch_params = {**params, "limit": 5000, "offset": 0}
         all_leads = current_org.db.raw_select("leads", fetch_params)
         all_leads.sort(key=lambda l: ESTADO_CLOSENESS_RANK.get(l.get("estado") or "nuevo", 99))
@@ -139,7 +133,6 @@ def list_leads(
         params["offset"] = (page - 1) * limit
         leads = current_org.db.raw_select("leads", params)
 
-    # Map score_ia → score for frontend
     for lead in leads:
         if "score_ia" in lead:
             lead["score"] = lead["score_ia"]
@@ -151,7 +144,6 @@ def list_leads(
 @router.get("/stats")
 def get_leads_stats(current_org: OrgContext = Depends(get_current_org)):
     all_leads = current_org.db.select_all("leads", select_cols="estado,provincia,email,whatsapp")
-
     by_estado: dict = {}
     by_provincia: dict = {}
     con_email = 0
@@ -160,13 +152,10 @@ def get_leads_stats(current_org: OrgContext = Depends(get_current_org)):
     for lead in all_leads:
         estado = lead.get("estado") or "nuevo"
         by_estado[estado] = by_estado.get(estado, 0) + 1
-
         prov = lead.get("provincia") or "Desconocida"
         by_provincia[prov] = by_provincia.get(prov, 0) + 1
-
         if lead.get("email"):
             con_email += 1
-
         if lead.get("whatsapp"):
             con_whatsapp += 1
 
@@ -176,7 +165,6 @@ def get_leads_stats(current_org: OrgContext = Depends(get_current_org)):
         reverse=True,
     )
     por_estado = [{"estado": k, "count": v} for k, v in by_estado.items()]
-
     return {
         "total": len(all_leads),
         "con_email": con_email,
@@ -188,6 +176,7 @@ def get_leads_stats(current_org: OrgContext = Depends(get_current_org)):
 
 @router.get("/export")
 def export_leads_csv(
+    request: Request,
     empresa: Optional[str] = None,
     rubro: Optional[str] = None,
     provincia: Optional[str] = None,
@@ -200,8 +189,16 @@ def export_leads_csv(
                             con_email=con_email, con_telefono=con_telefono,
                             score_min=None, score_max=None)
     params["limit"] = 10000
-
     leads = current_org.db.raw_select("leads", params)
+
+    write_audit_log(
+        org=current_org,
+        action="leads.export_csv",
+        entity="leads",
+        metadata={"count": len(leads), "filters": {"empresa": empresa, "rubro": rubro, "provincia": provincia, "estado": estado}},
+        request=request,
+    )
+    record_usage(org=current_org, metric="exports", source="leads", entity="leads", quantity=1)
 
     fieldnames = [
         "empresa", "rubro", "direccion", "ciudad", "provincia",
@@ -209,13 +206,11 @@ def export_leads_csv(
         "instagram", "email", "whatsapp", "score_ia", "observaciones",
         "fuente", "fecha_extraccion", "estado",
     ]
-
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     for lead in leads:
         writer.writerow(lead)
-
     output.seek(0)
     filename = f"leads_kairos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
     return StreamingResponse(
@@ -246,12 +241,14 @@ def get_today_tasks(current_org: OrgContext = Depends(get_current_org)):
 
 
 @router.post("/import")
-async def import_leads_csv(file: UploadFile = File(...), current_org: OrgContext = Depends(get_current_org)):
+async def import_leads_csv(request: Request, file: UploadFile = File(...), current_org: OrgContext = Depends(get_current_org)):
     content = await file.read()
-    text = content.decode("utf-8-sig")  # utf-8-sig handles Excel BOM
+    text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
 
-    # Normalize column names: strip whitespace, lowercase
+    rows = list(reader)
+    assert_plan_allows(current_org, "leads", quantity=len(rows), period="none")
+
     inserted = 0
     skipped = 0
     errors = []
@@ -267,9 +264,8 @@ async def import_leads_csv(file: UploadFile = File(...), current_org: OrgContext
         "observaciones": ["observaciones", "notas", "notes", "comments"],
     }
 
-    for row in reader:
-        row_lower = {k.strip().lower(): v.strip() for k, v in row.items() if k}
-
+    for row in rows:
+        row_lower = {k.strip().lower(): v.strip() for k, v in row.items() if k and v is not None}
         record = {"estado": "nuevo", "fuente": "CSV Import"}
         for field, aliases in FIELD_MAP.items():
             for alias in aliases:
@@ -281,7 +277,6 @@ async def import_leads_csv(file: UploadFile = File(...), current_org: OrgContext
             skipped += 1
             continue
 
-        # Deduplicate by empresa name
         try:
             existing = current_org.db.select("leads", filters={"empresa": f"eq.{record['empresa']}"}, limit=1)
             if existing:
@@ -292,11 +287,20 @@ async def import_leads_csv(file: UploadFile = File(...), current_org: OrgContext
         except Exception as e:
             errors.append(str(e)[:100])
 
+    if inserted:
+        record_usage(org=current_org, metric="leads", quantity=inserted, source="csv_import", entity="leads")
+    write_audit_log(
+        org=current_org,
+        action="leads.import_csv",
+        entity="leads",
+        metadata={"inserted": inserted, "skipped": skipped, "errors": len(errors), "filename": file.filename},
+        request=request,
+    )
     return {"inserted": inserted, "skipped": skipped, "errors": errors[:5]}
 
 
 @router.post("/{lead_id}/tasks")
-def create_task(lead_id: str, body: TaskCreate, current_org: OrgContext = Depends(get_current_org)):
+def create_task(request: Request, lead_id: str, body: TaskCreate, current_org: OrgContext = Depends(get_current_org)):
     _require_lead(current_org, lead_id)
     task = current_org.db.insert("tasks", {
         "lead_id": lead_id,
@@ -306,45 +310,46 @@ def create_task(lead_id: str, body: TaskCreate, current_org: OrgContext = Depend
         "completado": False,
         "created_at": datetime.utcnow().isoformat(),
     })
+    write_audit_log(org=current_org, action="lead.task.create", entity="task", entity_id=task.get("id"), metadata={"lead_id": lead_id}, request=request)
     return task
 
 
 @router.get("/{lead_id}/tasks")
 def get_tasks(lead_id: str, current_org: OrgContext = Depends(get_current_org)):
     _require_lead(current_org, lead_id)
-    tasks = current_org.db.select("tasks", filters={"lead_id": f"eq.{lead_id}"}, order="fecha_vencimiento.asc.nullslast")
-    return tasks
+    return current_org.db.select("tasks", filters={"lead_id": f"eq.{lead_id}"}, order="fecha_vencimiento.asc.nullslast")
 
 
 @router.patch("/{lead_id}/tasks/{task_id}")
-def update_task(lead_id: str, task_id: str, body: TaskUpdate, current_org: OrgContext = Depends(get_current_org)):
+def update_task(request: Request, lead_id: str, task_id: str, body: TaskUpdate, current_org: OrgContext = Depends(get_current_org)):
     _require_lead(current_org, lead_id)
     update_data = body.model_dump(exclude_none=True)
     updated = current_org.db.update("tasks", task_id, update_data)
+    write_audit_log(org=current_org, action="lead.task.update", entity="task", entity_id=task_id, metadata={"lead_id": lead_id, "fields": list(update_data.keys())}, request=request)
     return updated
 
 
 @router.post("/{lead_id}/notes")
-def create_note(lead_id: str, body: NoteCreate, current_org: OrgContext = Depends(get_current_org)):
+def create_note(request: Request, lead_id: str, body: NoteCreate, current_org: OrgContext = Depends(get_current_org)):
     _require_lead(current_org, lead_id)
     note = current_org.db.insert("lead_notes", {
         "lead_id": lead_id,
         "texto": body.text,
         "created_at": datetime.utcnow().isoformat(),
     })
+    write_audit_log(org=current_org, action="lead.note.create", entity="lead_note", entity_id=note.get("id"), metadata={"lead_id": lead_id}, request=request)
     return note
 
 
 @router.get("/{lead_id}/notes")
 def get_notes(lead_id: str, current_org: OrgContext = Depends(get_current_org)):
     _require_lead(current_org, lead_id)
-    notes = current_org.db.select(
+    return current_org.db.select(
         "lead_notes",
         filters={"lead_id": f"eq.{lead_id}"},
         order="created_at.desc",
         limit=100,
     )
-    return notes
 
 
 @router.get("/{lead_id}")
@@ -353,22 +358,11 @@ def get_lead(lead_id: str, current_org: OrgContext = Depends(get_current_org)):
     if "score_ia" in lead:
         lead["score"] = lead["score_ia"]
     try:
-        activities = current_org.db.select(
-            "activities",
-            filters={"lead_id": f"eq.{lead_id}"},
-            order="created_at.desc",
-            limit=50,
-        )
-        lead["activities"] = activities
+        lead["activities"] = current_org.db.select("activities", filters={"lead_id": f"eq.{lead_id}"}, order="created_at.desc", limit=50)
     except Exception:
         lead["activities"] = []
     try:
-        lead["notas"] = current_org.db.select(
-            "lead_notes",
-            filters={"lead_id": f"eq.{lead_id}"},
-            order="created_at.asc",
-            limit=100,
-        )
+        lead["notas"] = current_org.db.select("lead_notes", filters={"lead_id": f"eq.{lead_id}"}, order="created_at.asc", limit=100)
     except Exception:
         lead["notas"] = []
     return lead
@@ -376,15 +370,13 @@ def get_lead(lead_id: str, current_org: OrgContext = Depends(get_current_org)):
 
 @router.patch("/{lead_id}")
 @router.put("/{lead_id}")
-def update_lead(lead_id: str, body: LeadUpdate, current_org: OrgContext = Depends(get_current_org)):
+def update_lead(request: Request, lead_id: str, body: LeadUpdate, current_org: OrgContext = Depends(get_current_org)):
     _require_lead(current_org, lead_id)
-
     update_data = body.model_dump(exclude_none=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
-
     update_data["updated_at"] = datetime.utcnow().isoformat()
     update_data["ultima_actividad"] = datetime.utcnow().isoformat()
-
     updated = current_org.db.update("leads", lead_id, update_data)
+    write_audit_log(org=current_org, action="lead.update", entity="lead", entity_id=lead_id, metadata={"fields": list(update_data.keys())}, request=request)
     return updated

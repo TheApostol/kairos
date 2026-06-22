@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import leads, scraper, campaigns, orders, products, organizations, public
+from routers import leads, scraper, campaigns, orders, products, organizations, public, platform
 import worker
 
 
@@ -48,6 +48,7 @@ app.include_router(orders.router)
 app.include_router(products.router)
 app.include_router(organizations.router)
 app.include_router(public.router)
+app.include_router(platform.router)
 
 
 @app.get("/")
