@@ -893,6 +893,16 @@ def _kd_map_product(raw: dict, category: str) -> dict:
 
     desc = (raw.get("p_descripcion") or "").strip() or None
 
+    # The source's stock entry marks "s_ilimitado" (unlimited/untracked) for
+    # most products, with a meaningless s_cantidad of 0 in that case — that's
+    # not the same as confirmed-zero stock, so leave it unset (None) rather
+    # than have it land on the products table's DEFAULT 0 and show as "Sin
+    # stock" on the public catalog.
+    stock_entries = raw.get("stock") or []
+    stock = None
+    if stock_entries and not stock_entries[0].get("s_ilimitado"):
+        stock = stock_entries[0].get("s_cantidad")
+
     return {
         "nombre": raw["p_nombre"],
         "sku": str(raw["idProductos"]),
@@ -903,6 +913,7 @@ def _kd_map_product(raw: dict, category: str) -> dict:
         "precio_promo": promo,
         "imagen_url": images[0] if images else None,
         "imagenes_extra": images[1:] if len(images) > 1 else None,
+        "stock": stock,
         "activo": not bool(raw.get("p_desactivado", 0)),
         "destacado": bool(raw.get("p_destacado", 0)),
     }
