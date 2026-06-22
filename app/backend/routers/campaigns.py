@@ -4,7 +4,6 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import Response as RawResponse
 from pydantic import BaseModel
 
 from services.auth import OrgContext, get_current_org
@@ -303,34 +302,6 @@ def _run_process_followups(org_id: str):
 # ─────────────────────────────────────────────
 # ROUTES
 # ─────────────────────────────────────────────
-
-@router.get("/track/{campaign_id}/{send_id}")
-def track_open(campaign_id: str, send_id: str):
-    """Email open tracking pixel — loaded by the recipient's email client with
-    no auth context, so this uses the global `db` directly rather than an
-    org-scoped client; it only flips a flag and increments a counter, no
-    lead/campaign data is read back to the caller."""
-    try:
-        sends = db.select("campaign_sends", filters={"id": f"eq.{send_id}", "campaign_id": f"eq.{campaign_id}"}, limit=1)
-        if sends and not sends[0].get("abierto_at"):
-            now_str = datetime.now(timezone.utc).isoformat()
-            db.update("campaign_sends", send_id, {"abierto_at": now_str, "estado": "abierto"})
-            camps = db.select("campaigns", filters={"id": f"eq.{campaign_id}"}, limit=1)
-            if camps:
-                current = int(camps[0].get("abiertos") or 0)
-                db.update("campaigns", campaign_id, {"abiertos": current + 1})
-    except Exception:
-        pass
-    # 1x1 transparent GIF
-    gif = (
-        b"\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00"
-        b"\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00"
-        b"\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02"
-        b"\x44\x01\x00\x3b"
-    )
-    return RawResponse(content=gif, media_type="image/gif",
-                       headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
-
 
 @router.post("/process-followups")
 def process_followups(background_tasks: BackgroundTasks, current_org: OrgContext = Depends(get_current_org)):

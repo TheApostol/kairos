@@ -48,6 +48,7 @@ app.include_router(orders.router)
 app.include_router(products.router)
 app.include_router(organizations.router)
 app.include_router(public.router)
+app.include_router(public.tracking_router)
 app.include_router(platform.router)
 
 
