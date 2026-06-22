@@ -5,6 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
+from services.auth import DEFAULT_ORGANIZATION_ID
 from services.platform_auth import PlatformAdminContext, require_platform_role
 from services.supabase_client import db
 
@@ -29,7 +30,7 @@ def platform_summary(admin: PlatformAdminContext = Depends(require_platform_role
     active_orgs = [o for o in orgs if o.get("status") == "active"]
     trial_orgs = [o for o in orgs if o.get("status") == "trialing"]
     lead_clients = [o for o in orgs if o.get("customer_tier") == "lead_client"]
-    kairos_org = next((o for o in orgs if o.get("slug") == "kairos" or o.get("id") == "00000000-0000-0000-0000-000000000001"), None)
+    kairos_org = next((o for o in orgs if o.get("slug") == "kairos" or o.get("id") == DEFAULT_ORGANIZATION_ID), None)
     past_due = [s for s in subscriptions if s.get("status") == "past_due"]
 
     return {

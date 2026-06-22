@@ -247,6 +247,7 @@ async def import_leads_csv(request: Request, file: UploadFile = File(...), curre
     reader = csv.DictReader(io.StringIO(text))
 
     rows = list(reader)
+    # Reject outright if the batch can't possibly fit, before doing any work.
     assert_plan_allows(current_org, "leads", quantity=len(rows), period="none")
 
     inserted = 0
@@ -276,6 +277,16 @@ async def import_leads_csv(request: Request, file: UploadFile = File(...), curre
         if not record.get("empresa"):
             skipped += 1
             continue
+
+        try:
+            # Re-check per-row rather than relying on the upfront batch check
+            # alone — narrows the window for a concurrent import (or another
+            # request) to push the org over the limit between the upfront
+            # check and this row's insert.
+            assert_plan_allows(current_org, "leads", quantity=1, period="none")
+        except HTTPException:
+            errors.append("plan_limit_exceeded: remaining rows skipped")
+            break
 
         try:
             existing = current_org.db.select("leads", filters={"empresa": f"eq.{record['empresa']}"}, limit=1)
