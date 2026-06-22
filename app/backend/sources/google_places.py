@@ -1,7 +1,12 @@
-"""Google Places API source (Text Search + Place Details).
+"""Google Places API (New) source — Text Search.
 
-Relocated from `routers/scraper.py` — behavior is unchanged from before the
-multi-source refactor. Requires a Google Cloud Places API key with billing
+Relocated from `routers/scraper.py`; migrated from the legacy
+`maps.googleapis.com/maps/api/place/*` endpoints to the New Places API
+(`places.googleapis.com/v1/places:searchText`), since Google rejects legacy
+endpoint calls for projects that only have "Places API (New)" enabled
+(the default for newly created keys). A field mask on the Text Search call
+returns enough place detail directly, so the separate Place Details request
+is no longer needed. Requires a Google Cloud Places API key with billing
 enabled; kept as an optional source now that several free sources exist.
 """
 
@@ -202,57 +207,82 @@ MAYORISTA_QUERIES = [
 
 class PlacesAPIError(Exception):
     """Raised when the Google Places API itself reports an error status
-    (bad/missing key, quota exceeded, etc). The HTTP request still returns
-    200 OK in these cases, so this can't be caught via raise_for_status()."""
+    (bad/missing key, API not enabled, quota exceeded, etc)."""
+
+
+PLACES_NEW_BASE = "https://places.googleapis.com/v1"
+
+_SEARCH_FIELD_MASK = ",".join([
+    "places.id",
+    "places.displayName",
+    "places.formattedAddress",
+    "places.addressComponents",
+    "places.nationalPhoneNumber",
+    "places.internationalPhoneNumber",
+    "places.websiteUri",
+    "places.rating",
+    "places.userRatingCount",
+    "places.priceLevel",
+    "places.regularOpeningHours",
+    "places.googleMapsUri",
+    "places.types",
+    "nextPageToken",
+])
+
+_PRICE_LEVEL_TO_INT = {
+    "PRICE_LEVEL_FREE": 0,
+    "PRICE_LEVEL_INEXPENSIVE": 1,
+    "PRICE_LEVEL_MODERATE": 2,
+    "PRICE_LEVEL_EXPENSIVE": 3,
+    "PRICE_LEVEL_VERY_EXPENSIVE": 4,
+}
+
+
+def _price_level_to_int(value: Optional[str]) -> Optional[int]:
+    """Maps the New API's string price-level enum back to the int 0-4 the
+    `leads.price_level` column expects (unmapped/unspecified -> None)."""
+    return _PRICE_LEVEL_TO_INT.get(value or "")
 
 
 def _places_text_search(api_key: str, query: str, page_token: Optional[str] = None) -> dict:
-    url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-    params = {
-        "query": query,
-        "key": api_key,
-        "language": "es",
-        "region": "ar",
+    url = f"{PLACES_NEW_BASE}/places:searchText"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": _SEARCH_FIELD_MASK,
+    }
+    body: dict = {
+        "textQuery": query,
+        "languageCode": "es",
+        "regionCode": "AR",
     }
     if page_token:
-        params["pagetoken"] = page_token
+        body["pageToken"] = page_token
 
     with httpx.Client(timeout=15) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        resp = client.post(url, headers=headers, json=body)
 
-    status = data.get("status")
-    if status not in ("OK", "ZERO_RESULTS"):
-        raise PlacesAPIError(f"{status}: {data.get('error_message', 'Google Places API error')}")
-    return data
+    if resp.status_code != 200:
+        try:
+            message = resp.json().get("error", {}).get("message", resp.text)
+        except Exception:
+            message = resp.text
+        raise PlacesAPIError(f"{resp.status_code}: {message}")
 
-
-def _place_details(api_key: str, place_id: str) -> dict:
-    url = "https://maps.googleapis.com/maps/api/place/details/json"
-    params = {
-        "place_id": place_id,
-        "key": api_key,
-        "fields": "name,formatted_address,formatted_phone_number,international_phone_number,website,rating,user_ratings_total,price_level,opening_hours,address_components,url",
-        "language": "es",
-    }
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json().get("result", {})
+    return resp.json()
 
 
 def _extract_province(address_components: list) -> str:
     for comp in address_components:
         if "administrative_area_level_1" in comp.get("types", []):
-            return comp.get("long_name", "")
+            return comp.get("longText", "")
     return ""
 
 
 def _extract_city(address_components: list) -> str:
     for comp in address_components:
         if "locality" in comp.get("types", []):
-            return comp.get("long_name", "")
+            return comp.get("longText", "")
     return ""
 
 
@@ -281,33 +311,25 @@ def search_by_name(empresa: str, ciudad: str = "", provincia: str = "") -> Optio
     except Exception:
         return None
 
-    places = data.get("results", [])
+    places = data.get("places", [])
     if not places:
         return None
 
     place = places[0]
-    pid = place.get("place_id")
-    if not pid:
-        return None
-
-    try:
-        details = _place_details(api_key, pid)
-    except Exception:
-        return None
-
-    addr_comps = details.get("address_components", [])
-    phone = details.get("formatted_phone_number", "") or details.get("international_phone_number", "")
-    website = details.get("website", "")
+    addr_comps = place.get("addressComponents", [])
+    phone = place.get("nationalPhoneNumber", "") or place.get("internationalPhoneNumber", "")
+    website = place.get("websiteUri", "")
+    name = place.get("displayName", {}).get("text") or empresa
 
     return {
-        "empresa": details.get("name", place.get("name", empresa)),
-        "direccion": details.get("formatted_address", ""),
+        "empresa": name,
+        "direccion": place.get("formattedAddress", ""),
         "ciudad": _extract_city(addr_comps) or ciudad,
         "provincia": _extract_province(addr_comps) or provincia,
         "telefono": phone,
         "website": website,
-        "google_maps_url": details.get("url", ""),
-        "instagram": _infer_instagram(place.get("name", ""), website),
+        "google_maps_url": place.get("googleMapsUri", ""),
+        "instagram": _infer_instagram(name, website),
         "whatsapp": phone.replace(" ", "").replace("-", "").replace("+", "") if phone else "",
     }
 
@@ -321,11 +343,12 @@ def iter_leads(
     max_per_query: int = 60,
     **_kwargs,
 ) -> Iterator[dict]:
-    """Yields lead records from Google Places Text Search + Place Details.
+    """Yields lead records from the Google Places API (New) Text Search.
 
     Same pagination/delay behavior as the original inline implementation:
-    up to 3 pages per query, 2s delay between pages, 0.1s delay before each
-    Place Details call, 0.5s delay between queries.
+    up to 3 pages per query, 2s delay between pages, 0.5s delay between
+    queries. The New API's field mask returns enough place detail directly
+    from Text Search, so the separate Place Details call is no longer made.
     """
     if not api_key:
         raise PlacesAPIError("Google API key required for the google_places source")
@@ -342,10 +365,10 @@ def iter_leads(
                 time.sleep(2)
 
             data = _places_text_search(api_key, query, next_page_token)
-            places = data.get("results", [])
+            places = data.get("places", [])
 
             for place in places:
-                pid = place.get("place_id")
+                pid = place.get("id")
                 if pid in seen_ids:
                     continue
                 seen_ids.add(pid)
@@ -354,35 +377,31 @@ def iter_leads(
                 if place_types & IRRELEVANT_PLACE_TYPES:
                     continue
 
-                time.sleep(0.1)
-                details = _place_details(api_key, pid)
-
-                addr_comps = details.get("address_components", [])
-                phone = details.get("formatted_phone_number", "") or details.get(
-                    "international_phone_number", ""
-                )
-                website = details.get("website", "")
+                addr_comps = place.get("addressComponents", [])
+                phone = place.get("nationalPhoneNumber", "") or place.get("internationalPhoneNumber", "")
+                website = place.get("websiteUri", "")
+                name = place.get("displayName", {}).get("text") or ""
 
                 yield make_lead_record(
-                    empresa=details.get("name", place.get("name", "")),
+                    empresa=name,
                     rubro="Tienda Holística / Sahumerios",
-                    direccion=details.get("formatted_address", ""),
+                    direccion=place.get("formattedAddress", ""),
                     ciudad=_extract_city(addr_comps),
                     provincia=_extract_province(addr_comps),
                     telefono=phone,
                     website=website,
-                    google_maps_url=details.get("url", ""),
-                    rating=details.get("rating"),
-                    reviews_count=details.get("user_ratings_total"),
-                    price_level=details.get("price_level"),
-                    horarios="; ".join(details.get("opening_hours", {}).get("weekday_text", [])),
-                    instagram=_infer_instagram(place.get("name", ""), website),
+                    google_maps_url=place.get("googleMapsUri", ""),
+                    rating=place.get("rating"),
+                    reviews_count=place.get("userRatingCount"),
+                    price_level=_price_level_to_int(place.get("priceLevel")),
+                    horarios="; ".join(place.get("regularOpeningHours", {}).get("weekdayDescriptions", [])),
+                    instagram=_infer_instagram(name, website),
                     whatsapp=phone.replace(" ", "").replace("-", "").replace("+", "") if phone else "",
                     fuente="Google Places API",
                     tipo_cliente=tipo_cliente,
                 )
 
-            next_page_token = data.get("next_page_token")
+            next_page_token = data.get("nextPageToken")
             if not next_page_token:
                 break
             page += 1
