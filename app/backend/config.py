@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
     # Render API key for automation (deploy triggers, service status, etc.)
     RENDER_API_KEY: str = ""
+    # Service account JSON for write access to Google Sheets (shared across
+    # orgs — each org just needs to share its own sheet with this account's
+    # email as Editor). Read-only sync works without it via the public CSV
+    # export URL; this is only needed for auto-populating/exporting back.
+    GOOGLE_SERVICE_ACCOUNT_JSON: str = ""
 
     # App URLs
     SENDER_EMAIL: str = "noreply@kairos.com"

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
-import { getProducts, getProductCategories, createProduct, updateProduct, getProductPriceHistory, downloadFile, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet } from '@/lib/api'
+import { getProducts, getProductCategories, createProduct, updateProduct, getProductPriceHistory, downloadFile, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, getSheetConfig, setSheetId, exportCatalogToSheet } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw, History, ChevronDown } from 'lucide-react'
+import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw, History, ChevronDown, Link2, CheckCircle2 } from 'lucide-react'
 
 const PER_PAGE = 24
 
@@ -163,19 +163,32 @@ export default function CatalogPage() {
   const [pdfError, setPdfError] = useState('')
 
   // Google Sheets sync
-  const SHEET_ID = '1QSynaIHWtcXiKcG-YuqAy2p8oRlOW5Bh5Qj3P0zGJA'
   const [sheetSyncing, setSheetSyncing] = useState(false)
   const [sheetSyncResult, setSheetSyncResult] = useState('')
+  const [sheetId, setSheetIdState] = useState('')
+  const [sheetInput, setSheetInput] = useState('')
+  const [showSheetConfig, setShowSheetConfig] = useState(false)
+  const [savingSheet, setSavingSheet] = useState(false)
+  const [exportingToSheet, setExportingToSheet] = useState(false)
+  const [lastSync, setLastSync] = useState<string | null>(null)
+  const [lastResult, setLastResult] = useState<{ created: number; updated: number; skipped: number; exported?: number } | null>(null)
 
   // Price history
   const [showPriceHistory, setShowPriceHistory] = useState(false)
   const [priceHistory, setPriceHistory] = useState<Array<{ precio_minorista?: number; precio_mayorista?: number; changed_at: string }>>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
 
-  // Load category list once
+  // Load category list + sheet config on mount
   useEffect(() => {
     getProductCategories()
       .then((data) => setCategories(data.categories ?? []))
+      .catch(() => {})
+    getSheetConfig()
+      .then((cfg) => {
+        if (cfg?.sheet_id) { setSheetIdState(cfg.sheet_id); setSheetInput(cfg.sheet_id) }
+        if (cfg?.last_sync) setLastSync(cfg.last_sync)
+        if (cfg?.last_result) setLastResult(cfg.last_result)
+      })
       .catch(() => {})
   }, [])
 
@@ -407,21 +420,56 @@ export default function CatalogPage() {
               setSheetSyncing(true)
               setSheetSyncResult('')
               try {
-                const r = await syncFromGoogleSheet(SHEET_ID)
-                setSheetSyncResult(`✓ ${r.updated} actualizados, ${r.skipped} sin cambios${r.errors?.length ? `, ${r.errors.length} errores` : ''}`)
+                const r = await syncFromGoogleSheet()
+                setSheetSyncResult(`✓ ${r.created ?? 0} creados, ${r.updated ?? 0} actualizados${r.errors?.length ? `, ${r.errors.length} errores` : ''}`)
+                setLastSync(new Date().toISOString())
+                setLastResult(r)
                 setProductRefresh((n) => n + 1)
               } catch (e: unknown) {
-                setSheetSyncResult(`Error: ${e instanceof Error ? e.message : 'Error al sincronizar'}`)
+                setSheetSyncResult(`Error: ${e instanceof Error ? e.message : 'Sin hoja configurada'}`)
               } finally {
                 setSheetSyncing(false)
                 setTimeout(() => setSheetSyncResult(''), 6000)
               }
             }}
-            disabled={sheetSyncing}
+            disabled={sheetSyncing || !sheetId}
             className="gap-2"
+            title={!sheetId ? 'Configurá el Google Sheet primero' : ''}
           >
             {sheetSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            {sheetSyncing ? 'Sincronizando...' : 'Sync desde Sheet'}
+            {sheetSyncing ? 'Sincronizando...' : 'Sync ahora'}
+          </Button>
+          {sheetId && (
+            <Button
+              variant="outline"
+              onClick={async () => {
+                setExportingToSheet(true)
+                setSheetSyncResult('')
+                try {
+                  const r = await exportCatalogToSheet()
+                  setSheetSyncResult(`✓ ${r.exported ?? 0} productos exportados al Sheet`)
+                } catch (e: unknown) {
+                  setSheetSyncResult(`Error: ${e instanceof Error ? e.message : 'No se pudo exportar'}`)
+                } finally {
+                  setExportingToSheet(false)
+                  setTimeout(() => setSheetSyncResult(''), 6000)
+                }
+              }}
+              disabled={exportingToSheet}
+              className="gap-2"
+              title="Escribe todos los productos actuales en la planilla de Google Sheets"
+            >
+              {exportingToSheet ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {exportingToSheet ? 'Exportando...' : 'Poblar Sheet'}
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => setShowSheetConfig(true)}
+            className={`gap-2 ${sheetId ? 'border-green-500 text-green-700' : 'border-dashed'}`}
+          >
+            {sheetId ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <Link2 className="w-4 h-4" />}
+            {sheetId ? 'Sheet conectado' : 'Conectar Google Sheet'}
           </Button>
           <Button onClick={openAddDialog} className="gap-2">
             <Plus className="w-4 h-4" />
@@ -446,6 +494,18 @@ export default function CatalogPage() {
       {sheetSyncResult && (
         <p className={`text-sm font-medium -mt-3 ${sheetSyncResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
           {sheetSyncResult}
+        </p>
+      )}
+      {!sheetSyncResult && sheetId && lastSync && (
+        <p className="text-xs text-slate-400 -mt-3">
+          <CheckCircle2 className="inline w-3 h-3 text-green-500 mr-1" />
+          Sync automático activo · Último sync: {new Date(lastSync).toLocaleString('es-AR')}
+          {lastResult && ` · ${lastResult.created ?? 0} creados, ${lastResult.updated ?? 0} actualizados`}
+        </p>
+      )}
+      {!sheetId && (
+        <p className="text-xs text-amber-600 -mt-3">
+          Sin Google Sheet configurado — los productos se gestionan manualmente.
         </p>
       )}
 
@@ -866,6 +926,77 @@ export default function CatalogPage() {
             <Button onClick={handleExportPdf} disabled={(!pdfSelectAll && selectedForPdf.size === 0) || downloadingPdf} className="gap-2">
               {downloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
               {downloadingPdf ? 'Generando...' : 'Descargar PDF'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Google Sheet Config Dialog */}
+      <Dialog open={showSheetConfig} onOpenChange={setShowSheetConfig}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sheet className="w-5 h-5 text-green-600" />
+              Conectar Google Sheet al Catálogo
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800 space-y-1">
+              <p className="font-semibold">¿Cómo funciona?</p>
+              <p>Al conectar, el sistema escribe todos los productos actuales en la planilla automáticamente. Después, cualquier cambio que hagas en la planilla se sincroniza al catálogo cada 10 minutos.</p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 space-y-1">
+              <p className="font-semibold">Requisito para auto-poblar la planilla</p>
+              <p>Para que el sistema pueda <em>escribir</em> en la planilla necesita una cuenta de servicio de Google (variable <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> en el servidor). Compartí la planilla con el email de esa cuenta de servicio como Editor.</p>
+              <p>Sin cuenta de servicio, el sistema solo <em>lee</em> de la planilla — tenés que poblarla manualmente exportando el CSV desde el Catálogo.</p>
+            </div>
+            <div className="space-y-2 text-sm">
+              <p className="font-medium text-slate-700">Columnas de la planilla:</p>
+              <div className="rounded-md bg-slate-50 border p-3 font-mono text-xs text-slate-600 overflow-x-auto whitespace-nowrap">
+                ID · SKU · Nombre* · Categoría · Descripción · Precio Minorista · Precio Mayorista · Precio Promo · Cant. Mayorista · Stock · Activo · Imagen URL
+              </div>
+              <p className="text-slate-500">
+                * Solo <strong>Nombre</strong> es obligatorio para crear un producto nuevo.<br />
+                La planilla debe estar compartida como <strong>&quot;Cualquiera con el link puede ver&quot;</strong> (o con la cuenta de servicio como Editor).
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>URL o ID de la planilla</Label>
+              <Input
+                value={sheetInput}
+                onChange={(e) => setSheetInput(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/... o solo el ID"
+              />
+              <p className="text-xs text-slate-400">Acepta la URL completa — extrae el ID automáticamente.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSheetConfig(false)}>Cancelar</Button>
+            <Button
+              disabled={!sheetInput.trim() || savingSheet}
+              onClick={async () => {
+                setSavingSheet(true)
+                try {
+                  const r = await setSheetId(sheetInput.trim())
+                  setSheetIdState(r.sheet_id ?? sheetInput.trim())
+                  setLastSync(new Date().toISOString())
+                  setLastResult(r)
+                  setProductRefresh((n) => n + 1)
+                  setShowSheetConfig(false)
+                  const exportedMsg = r.exported != null ? ` · ${r.exported} productos escritos en la planilla` : ''
+                  setSheetSyncResult(`✓ Sheet conectado${exportedMsg} · ${r.created ?? 0} creados, ${r.updated ?? 0} actualizados`)
+                  setTimeout(() => setSheetSyncResult(''), 6000)
+                } catch (e: unknown) {
+                  setSheetSyncResult(`Error: ${e instanceof Error ? e.message : 'No se pudo conectar la hoja'}`)
+                  setTimeout(() => setSheetSyncResult(''), 6000)
+                } finally {
+                  setSavingSheet(false)
+                }
+              }}
+              className="gap-2"
+            >
+              {savingSheet ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {savingSheet ? 'Conectando...' : 'Guardar y sincronizar'}
             </Button>
           </DialogFooter>
         </DialogContent>

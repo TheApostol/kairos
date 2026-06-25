@@ -141,6 +141,28 @@ def get_current_org(authorization: str = Header(default=None), token: str = Quer
     )
 
 
+def get_organization_row(organization_id: str, select_cols: str = "*") -> dict | None:
+    """Fetch a single organization's own row by id. Safe outside ScopedSupabaseClient
+    because the filter is the org's own id, not a cross-tenant query."""
+    rows = db.select("organizations", filters={"id": f"eq.{organization_id}"}, select_cols=select_cols, limit=1)
+    return rows[0] if rows else None
+
+
+def update_organization_row(organization_id: str, data: dict) -> dict:
+    return db.update("organizations", organization_id, data)
+
+
+def list_organizations_with_sheet() -> list[dict]:
+    """All organizations that have a Google Sheet connected — used by the
+    cross-tenant auto-sync background loop (main.py), which by nature can't
+    go through a single-org ScopedSupabaseClient."""
+    return db.select(
+        "organizations",
+        filters={"google_sheet_id": "not.is.null"},
+        select_cols="id,google_sheet_id",
+    )
+
+
 def require_role(*roles: str):
     def checker(org: OrgContext = Depends(get_current_org)) -> OrgContext:
         if org.role not in roles:
