@@ -213,13 +213,19 @@ _DDG_REDIRECT_URL_REGEX = re.compile(r"uddg=([^&]+)")
 _ddg_rate_limiter = RateLimiter(min_interval=1.0, jitter=1.0)
 
 
-def ddg_html_search(query: str, max_results: int = 8) -> list[dict]:
+def ddg_html_search(
+    query: str, max_results: int = 8, excluded_domains: tuple = EXCLUDED_DOMAINS
+) -> list[dict]:
     """Free web search via DuckDuckGo's HTML endpoint (no API key).
 
     Returns up to `max_results` results as `{"title", "url", "snippet"}`
-    dicts, filtering out directories/social networks/map services (see
-    `EXCLUDED_DOMAINS`). Best-effort: returns `[]` if DDG rate-limits/blocks
-    the request or no results survive the filter.
+    dicts, filtering out `excluded_domains` (defaults to `EXCLUDED_DOMAINS` —
+    directories/social networks/map services, appropriate for website
+    discovery). Callers that are deliberately searching a social network
+    (e.g. `sources/instagram.py`'s `site:instagram.com` cross-reference
+    search) pass a narrower list with that domain removed. Best-effort:
+    returns `[]` if DDG rate-limits/blocks the request or no results
+    survive the filter.
     """
     resp = fetch_with_retries(
         "https://html.duckduckgo.com/html/",
@@ -248,7 +254,7 @@ def ddg_html_search(query: str, max_results: int = 8) -> list[dict]:
 
         if not url.startswith("http"):
             continue
-        if any(domain in url for domain in EXCLUDED_DOMAINS):
+        if any(domain in url for domain in excluded_domains):
             continue
 
         title = link.get_text(" ", strip=True)
@@ -272,6 +278,39 @@ GENERIC_BUSINESS_WORDS = {
     "store", "natural", "naturista", "holistico", "holistica", "esoterico",
     "esoterica", "the", "de", "del", "la", "el", "los", "las",
 }
+
+
+# Generic email/phone matching shared by sources that mine free text (DDG
+# snippets, social-profile bios/about pages) for contact info — distinct
+# from routers/scraper.py's own copies, which are tuned for full-page
+# scraping (e.g. handle Cloudflare-obfuscated emails) and stay private to
+# avoid a circular import (that module imports from `sources/*`).
+EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+PHONE_TEXT_REGEX = re.compile(
+    r'(?<!\d)'
+    r'(?:\+54[\s\-]?)?'
+    r'(?:0?11|0?[2-9]\d{1,3})?'
+    r'[\s\-]?'
+    r'(?:15[\s\-]?)?'
+    r'\d{4}[\s\-]?\d{4}'
+    r'(?!\d)'
+)
+
+_FAKE_EMAIL_FRAGMENTS = (
+    "noreply", "no-reply", "example", "domain.com", "sentry", "wix.com", "shopify",
+    "wordpress", "your@", "test@", "info@example", "@sentry", "yourdomain",
+    "schema.org", "w3.org", "placeholder",
+)
+
+
+def is_valid_email(email: str) -> bool:
+    e = email.lower()
+    return (
+        "@" in e
+        and "." in e.split("@")[-1]
+        and not any(x in e for x in _FAKE_EMAIL_FRAGMENTS)
+        and len(e) >= 6
+    )
 
 
 def name_tokens(text: str) -> set[str]:

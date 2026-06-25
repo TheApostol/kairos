@@ -20,6 +20,8 @@ from sources import SOURCE_REGISTRY, DEFAULT_SOURCES
 from sources.google_places import DEFAULT_QUERIES, MAYORISTA_QUERIES, PlacesAPIError
 from sources.paginas_amarillas import search_by_name as pa_search_by_name
 from sources.overpass import search_by_name as overpass_search_by_name
+from sources.instagram import search_by_name as instagram_search_by_name
+from sources.facebook import search_by_name as facebook_search_by_name
 from sources.google_places import search_by_name as google_places_search_by_name
 from config import settings
 
@@ -773,10 +775,16 @@ def _run_scraper_job(
 
 # Cross-reference sources consulted, in priority order, for whatever fields
 # are still missing after the website-discovery/scrape pass below. The free
-# directory sources run first since they're free to call; google_places goes
-# last and silently no-ops without a network call if GOOGLE_API_KEY isn't
+# directory/map sources run first since they're cheap and fast; social
+# scraping (Instagram/Facebook) is slower and more failure-prone (best-effort
+# against anti-scraping measures) so it runs after; google_places goes last
+# and silently no-ops without a network call if GOOGLE_API_KEY isn't
 # configured, so it's safe to leave in this list unconditionally.
-_CROSS_REFERENCE_SOURCES = [pa_search_by_name, overpass_search_by_name, google_places_search_by_name]
+_CROSS_REFERENCE_SOURCES = [
+    pa_search_by_name, overpass_search_by_name,
+    instagram_search_by_name, facebook_search_by_name,
+    google_places_search_by_name,
+]
 _CROSS_REFERENCE_FIELDS = (
     "website", "email", "instagram", "whatsapp", "telefono", "direccion", "ciudad", "provincia",
 )
