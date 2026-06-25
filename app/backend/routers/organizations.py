@@ -1,10 +1,11 @@
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from config import settings
 from services.auth import OrgContext, get_current_org, get_current_user, call_rpc, require_role
+from services.audit import write_audit_log
 from services.supabase_client import db
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -12,8 +13,8 @@ router = APIRouter(prefix="/organizations", tags=["organizations"])
 logger = logging.getLogger(__name__)
 
 
-VALID_INVITE_ROLES = {"admin", "sales", "viewer"}
-VALID_MEMBER_ROLES = {"owner", "admin", "sales", "viewer"}
+VALID_INVITE_ROLES = {"admin", "manager", "sales", "viewer"}
+VALID_MEMBER_ROLES = {"owner", "admin", "manager", "sales", "viewer"}
 VALID_MEMBER_STATUSES = {"active", "disabled"}
 
 
@@ -132,6 +133,19 @@ def accept_invitation(body: AcceptInvitation, user_and_token=Depends(get_current
     return {"organization_id": org_id}
 
 
+@router.post("/login-event")
+def record_login_event(request: Request, current_org: OrgContext = Depends(get_current_org)):
+    write_audit_log(
+        org=current_org,
+        action="auth.login",
+        entity="user",
+        entity_id=current_org.user_id,
+        metadata={"email": current_org.email},
+        request=request,
+    )
+    return {"ok": True}
+
+
 @router.get("/invitations")
 def list_invitations(current_org: OrgContext = Depends(require_role("owner", "admin"))):
     invitations = db.select(
@@ -143,7 +157,11 @@ def list_invitations(current_org: OrgContext = Depends(require_role("owner", "ad
 
 
 @router.post("/invitations")
-def create_invitation(body: InvitationCreate, current_org: OrgContext = Depends(require_role("owner", "admin"))):
+def create_invitation(
+    body: InvitationCreate,
+    request: Request,
+    current_org: OrgContext = Depends(require_role("owner", "admin")),
+):
     role = body.role.strip().lower()
     if role not in VALID_INVITE_ROLES:
         raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {', '.join(VALID_INVITE_ROLES)}")
@@ -162,13 +180,40 @@ def create_invitation(body: InvitationCreate, current_org: OrgContext = Depends(
     orgs = db.select("organizations", filters={"id": f"eq.{current_org.organization_id}"}, limit=1)
     org_name = orgs[0]["name"] if orgs else "Kairos"
     _send_invitation_email(email, org_name, role, invitation["token"])
+    write_audit_log(
+        org=current_org,
+        action="organization.invitation.create",
+        entity="organization_invitation",
+        entity_id=invitation.get("id"),
+        metadata={"email": email, "role": role},
+        request=request,
+    )
 
     return invitation
 
 
 @router.delete("/invitations/{invitation_id}")
-def revoke_invitation(invitation_id: str, current_org: OrgContext = Depends(require_role("owner", "admin"))):
+def revoke_invitation(
+    invitation_id: str,
+    request: Request,
+    current_org: OrgContext = Depends(require_role("owner", "admin")),
+):
+    invitations = db.select(
+        "organization_invitations",
+        filters={"id": f"eq.{invitation_id}", "organization_id": f"eq.{current_org.organization_id}"},
+        select_cols="id,email,role",
+        limit=1,
+    )
     db.delete("organization_invitations", invitation_id, extra_filters={"organization_id": f"eq.{current_org.organization_id}"})
+    invitation = invitations[0] if invitations else {}
+    write_audit_log(
+        org=current_org,
+        action="organization.invitation.revoke",
+        entity="organization_invitation",
+        entity_id=invitation_id,
+        metadata={"email": invitation.get("email"), "role": invitation.get("role")},
+        request=request,
+    )
     return {"ok": True}
 
 
@@ -182,7 +227,12 @@ def _active_owner_count(organization_id: str) -> int:
 
 
 @router.patch("/members/{user_id}")
-def update_member(user_id: str, body: MemberUpdate, current_org: OrgContext = Depends(require_role("owner", "admin"))):
+def update_member(
+    user_id: str,
+    body: MemberUpdate,
+    request: Request,
+    current_org: OrgContext = Depends(require_role("owner", "admin")),
+):
     update_data = body.model_dump(exclude_none=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -208,11 +258,27 @@ def update_member(user_id: str, body: MemberUpdate, current_org: OrgContext = De
         raise HTTPException(status_code=400, detail="Cannot remove the last owner of the organization")
 
     db.update("organization_users", member["id"], update_data)
+    write_audit_log(
+        org=current_org,
+        action="organization.member.update",
+        entity="organization_user",
+        entity_id=member["id"],
+        metadata={
+            "target_user_id": user_id,
+            "before": {k: member.get(k) for k in update_data},
+            "after": update_data,
+        },
+        request=request,
+    )
     return {"ok": True}
 
 
 @router.delete("/members/{user_id}")
-def remove_member(user_id: str, current_org: OrgContext = Depends(require_role("owner", "admin"))):
+def remove_member(
+    user_id: str,
+    request: Request,
+    current_org: OrgContext = Depends(require_role("owner", "admin")),
+):
     members = db.select(
         "organization_users",
         filters={"organization_id": f"eq.{current_org.organization_id}", "user_id": f"eq.{user_id}"},
@@ -226,4 +292,12 @@ def remove_member(user_id: str, current_org: OrgContext = Depends(require_role("
         raise HTTPException(status_code=400, detail="Cannot remove the last owner of the organization")
 
     db.delete("organization_users", member["id"])
+    write_audit_log(
+        org=current_org,
+        action="organization.member.remove",
+        entity="organization_user",
+        entity_id=member["id"],
+        metadata={"target_user_id": user_id, "role": member.get("role"), "status": member.get("status")},
+        request=request,
+    )
     return {"ok": True}

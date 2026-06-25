@@ -78,7 +78,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
         style={{ borderColor: '#3D2B1F' }}
       >
         <Image
-          src="/logo.svg"
+          src="/dashboard/logo.svg"
           alt="Kairos Distribuidora"
           width={220}
           height={80}
@@ -191,7 +191,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
             </p>
           )}
           <p className="text-xs truncate" style={{ color: '#8A6F5C' }}>
-            kairos.polkorp.com
+            polkorp.com/dashboard
           </p>
         </div>
         <button

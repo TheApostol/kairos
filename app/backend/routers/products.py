@@ -5,11 +5,12 @@ from xml.sax.saxutils import escape as _xml_escape
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services.auth import OrgContext, get_current_org
+from services.audit import write_audit_log
 from services.supabase_client import db, ScopedSupabaseClient
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -594,18 +595,26 @@ def list_products(
 
 
 @router.post("")
-def create_product(body: ProductCreate, current_org: OrgContext = Depends(get_current_org)):
+def create_product(request: Request, body: ProductCreate, current_org: OrgContext = Depends(get_current_org)):
     now = datetime.utcnow().isoformat()
     data = body.model_dump()
     data["created_at"] = now
     data["updated_at"] = now
     product = current_org.db.insert("products", data)
+    write_audit_log(
+        org=current_org,
+        action="product.create",
+        entity="product",
+        entity_id=product.get("id"),
+        metadata={"nombre": product.get("nombre"), "sku": product.get("sku")},
+        request=request,
+    )
     return product
 
 
 @router.put("/{product_id}")
 @router.patch("/{product_id}")
-def update_product(product_id: str, body: ProductUpdate, current_org: OrgContext = Depends(get_current_org)):
+def update_product(product_id: str, request: Request, body: ProductUpdate, current_org: OrgContext = Depends(get_current_org)):
     existing = current_org.db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -632,6 +641,14 @@ def update_product(product_id: str, body: ProductUpdate, current_org: OrgContext
 
     update_data["updated_at"] = datetime.utcnow().isoformat()
     updated = current_org.db.update("products", product_id, update_data)
+    write_audit_log(
+        org=current_org,
+        action="product.update",
+        entity="product",
+        entity_id=product_id,
+        metadata={"fields": [k for k in update_data.keys() if k != "updated_at"], "price_changed": price_changed},
+        request=request,
+    )
     return updated
 
 
@@ -647,7 +664,7 @@ def get_price_history(product_id: str, limit: int = 10, current_org: OrgContext 
 
 
 @router.delete("/{product_id}")
-def delete_product(product_id: str, current_org: OrgContext = Depends(get_current_org)):
+def delete_product(product_id: str, request: Request, current_org: OrgContext = Depends(get_current_org)):
     products = current_org.db.select("products", filters={"id": f"eq.{product_id}"}, limit=1)
     if not products:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -656,6 +673,14 @@ def delete_product(product_id: str, current_org: OrgContext = Depends(get_curren
         "activo": False,
         "updated_at": datetime.utcnow().isoformat(),
     })
+    write_audit_log(
+        org=current_org,
+        action="product.deactivate",
+        entity="product",
+        entity_id=product_id,
+        metadata={"nombre": products[0].get("nombre"), "sku": products[0].get("sku")},
+        request=request,
+    )
     return {"message": "Product deactivated", "id": product_id}
 
 
@@ -736,7 +761,7 @@ def export_catalog_get(
 
 
 @router.post("/export-catalog")
-def export_catalog(body: CatalogExportRequest, current_org: OrgContext = Depends(get_current_org)):
+def export_catalog(request: Request, body: CatalogExportRequest, current_org: OrgContext = Depends(get_current_org)):
     if body.product_ids:
         ids_str = ",".join(body.product_ids)
         products = current_org.db.raw_select("products", {
@@ -758,12 +783,20 @@ def export_catalog(body: CatalogExportRequest, current_org: OrgContext = Depends
     filename = f"catalogo_kairos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
 
     # Save export record
-    current_org.db.insert("catalog_exports", {
+    export_record = current_org.db.insert("catalog_exports", {
         "nombre": body.titulo,
         "tipo": "pdf",
         "productos": [p.get("id") for p in products],
         "created_at": datetime.utcnow().isoformat(),
     })
+    write_audit_log(
+        org=current_org,
+        action="products.catalog_export",
+        entity="catalog_export",
+        entity_id=export_record.get("id"),
+        metadata={"product_count": len(products), "incluir_precios": body.incluir_precios},
+        request=request,
+    )
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

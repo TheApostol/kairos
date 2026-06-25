@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import MobileLayout from './MobileLayout'
 
 const PUBLIC_PREFIXES = ['/login', '/signup', '/accept-invite', '/public']
-const NO_LAYOUT_PREFIXES = ['/onboarding', '/admin']
+const NO_LAYOUT_PREFIXES = ['/onboarding', '/platform', '/admin']
 
 function isTenantAdminLogin(pathname: string) {
   return /^\/[^/]+\/admin\/login$/.test(pathname)
@@ -34,7 +34,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loading) return
     if (!user && !isPublic) {
-      router.replace(pathname.startsWith('/admin') ? '/login?next=/admin' : '/login')
+      router.replace(pathname.startsWith('/admin') || pathname.startsWith('/platform') ? '/login?next=/admin' : '/login')
     } else if (user && (pathname === '/login' || pathname === '/signup')) {
       router.replace('/')
     }

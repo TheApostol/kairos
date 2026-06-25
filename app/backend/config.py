@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str = ""
 
     # Third-party services
+    AI_PROVIDER: str = "anthropic"
     ANTHROPIC_API_KEY: str = ""
     BREVO_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
@@ -27,10 +28,10 @@ class Settings(BaseSettings):
     BACKEND_URL: str = "http://localhost:8000"
 
     # Security
-    # Comma-separated origins. Example: https://kairos.vercel.app,https://kairosdis.com.ar
+    # Comma-separated origins. Example: https://polkorp.com,https://www.polkorp.com
     # Includes the production frontend by default so CORS still works even if
     # the ALLOWED_ORIGINS env var isn't configured on the host (e.g. Render).
-    ALLOWED_ORIGINS: str = "http://localhost:3000,https://kairos.polkorp.com"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,https://polkorp.com,https://www.polkorp.com"
     REQUIRE_AUTH: bool = True
 
     class Config:

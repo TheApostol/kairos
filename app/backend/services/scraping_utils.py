@@ -19,8 +19,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 USER_AGENT = (
-    "KairosLeadBot/1.0 (+https://kairos.polkorp.com; "
-    "contacto@kairos.polkorp.com; CRM lead discovery for wellness/natural "
+    "KairosLeadBot/1.0 (+https://polkorp.com/dashboard; "
+    "contacto@polkorp.com; CRM lead discovery for wellness/natural "
     "retailers in Argentina)"
 )
 

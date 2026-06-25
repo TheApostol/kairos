@@ -1,13 +1,14 @@
 // Kairos CRM Service Worker
 const CACHE = 'kairos-v1'
-const OFFLINE_URL = '/'
+const BASE_PATH = '/dashboard'
+const OFFLINE_URL = `${BASE_PATH}/admin`
 
 // Cache these on install for offline shell
 const PRECACHE = [
-  '/',
-  '/leads',
-  '/pipeline',
-  '/manifest.json',
+  `${BASE_PATH}/admin`,
+  `${BASE_PATH}/leads`,
+  `${BASE_PATH}/pipeline`,
+  `${BASE_PATH}/manifest.json`,
 ]
 
 self.addEventListener('install', (e) => {
@@ -28,7 +29,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url)
 
   // Never intercept API calls — always go to network
-  if (url.hostname.includes('onrender.com') || url.hostname.includes('supabase')) return
+  if (url.hostname.includes('onrender.com') || url.hostname.includes('supabase') || url.hostname === 'api.polkorp.com') return
   if (url.pathname.startsWith('/api/')) return
 
   // For navigation requests: network first, fallback to cache

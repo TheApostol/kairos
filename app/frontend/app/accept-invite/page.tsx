@@ -39,7 +39,7 @@ function AcceptInviteContent() {
     acceptInvitation(token)
       .then(() => {
         setStatus('success')
-        setTimeout(() => router.replace('/'), 2000)
+        setTimeout(() => router.replace('/admin'), 2000)
       })
       .catch((err) => {
         setStatus('error')
@@ -51,7 +51,7 @@ function AcceptInviteContent() {
     <div className="flex min-h-screen items-center justify-center px-4" style={{ backgroundColor: '#FAF7F2' }}>
       <div className="w-full max-w-sm">
         <div className="flex justify-center mb-6">
-          <Image src="/logo.svg" alt="Kairos Distribuidora" width={220} height={80} priority className="h-16 w-auto" />
+          <Image src="/dashboard/logo.svg" alt="Kairos Distribuidora" width={220} height={80} priority className="h-16 w-auto" />
         </div>
         <div className="rounded-xl shadow-sm p-6 text-center" style={{ backgroundColor: '#fff', border: '1px solid #E8DDD5' }}>
           {authLoading || status === 'loading' ? (
@@ -86,7 +86,7 @@ function AcceptInviteContent() {
               <p className="text-sm font-medium" style={{ color: '#2C1F16' }}>No se pudo aceptar la invitación</p>
               {error && <p className="text-sm mt-1" style={{ color: '#6B4F3A' }}>{error}</p>}
               <Button asChild className="w-full mt-4">
-                <Link href="/">Ir al panel</Link>
+                <Link href="/admin">Ir al panel</Link>
               </Button>
             </>
           ) : null}

@@ -181,6 +181,8 @@ class ScopedSupabaseClient:
     RLS) cannot accidentally read or write another tenant's rows."""
 
     def __init__(self, base: SupabaseClient, organization_id: str):
+        if not organization_id:
+            raise ValueError("organization_id is required for scoped database access")
         self._base = base
         self.organization_id = organization_id
 

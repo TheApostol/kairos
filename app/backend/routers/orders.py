@@ -1,11 +1,12 @@
 import io
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services.auth import OrgContext, get_current_org
+from services.audit import write_audit_log
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -379,7 +380,7 @@ def list_orders(
 
 
 @router.post("")
-def create_order(body: OrderCreate, current_org: OrgContext = Depends(get_current_org)):
+def create_order(request: Request, body: OrderCreate, current_org: OrgContext = Depends(get_current_org)):
     numero = body.numero or _generate_order_number()
     now = datetime.utcnow().isoformat()
 
@@ -430,6 +431,14 @@ def create_order(body: OrderCreate, current_org: OrgContext = Depends(get_curren
         created_items.append(created_item)
 
     order["items"] = created_items
+    write_audit_log(
+        org=current_org,
+        action="order.create",
+        entity="order",
+        entity_id=order_id,
+        metadata={"numero": order.get("numero"), "lead_id": body.lead_id, "items": len(created_items), "total": order.get("total")},
+        request=request,
+    )
     return order
 
 
@@ -481,7 +490,7 @@ def get_order(order_id: str, current_org: OrgContext = Depends(get_current_org))
 
 @router.put("/{order_id}")
 @router.patch("/{order_id}")
-def update_order(order_id: str, body: OrderUpdate, current_org: OrgContext = Depends(get_current_org)):
+def update_order(order_id: str, request: Request, body: OrderUpdate, current_org: OrgContext = Depends(get_current_org)):
     existing = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -534,11 +543,19 @@ def update_order(order_id: str, body: OrderUpdate, current_org: OrgContext = Dep
         leads = current_org.db.select("leads", filters={"id": f"eq.{updated_order['lead_id']}"}, limit=1)
         if leads:
             updated_order["lead"] = {k: leads[0].get(k) for k in ["id", "empresa", "email", "telefono", "ciudad", "provincia"]}
+    write_audit_log(
+        org=current_org,
+        action="order.update",
+        entity="order",
+        entity_id=order_id,
+        metadata={"fields": list(update_data.keys()), "items_replaced": body.items is not None, "total": updated_order.get("total")},
+        request=request,
+    )
     return updated_order
 
 
 @router.post("/{order_id}/items")
-def add_order_item(order_id: str, body: OrderItemCreate, current_org: OrgContext = Depends(get_current_org)):
+def add_order_item(order_id: str, request: Request, body: OrderItemCreate, current_org: OrgContext = Depends(get_current_org)):
     orders = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if not orders:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -565,12 +582,20 @@ def add_order_item(order_id: str, body: OrderItemCreate, current_org: OrgContext
         "total": totals["total"],
         "updated_at": datetime.utcnow().isoformat(),
     })
+    write_audit_log(
+        org=current_org,
+        action="order.item.create",
+        entity="order_item",
+        entity_id=new_item.get("id"),
+        metadata={"order_id": order_id, "product_id": body.product_id, "cantidad": body.cantidad, "subtotal": subtotal},
+        request=request,
+    )
 
     return new_item
 
 
 @router.delete("/{order_id}/items/{item_id}")
-def delete_order_item(order_id: str, item_id: str, current_org: OrgContext = Depends(get_current_org)):
+def delete_order_item(order_id: str, item_id: str, request: Request, current_org: OrgContext = Depends(get_current_org)):
     items = current_org.db.select(
         "order_items",
         filters={"id": f"eq.{item_id}", "order_id": f"eq.{order_id}"},
@@ -580,6 +605,7 @@ def delete_order_item(order_id: str, item_id: str, current_org: OrgContext = Dep
         raise HTTPException(status_code=404, detail="Order item not found")
 
     current_org.db.delete("order_items", item_id)
+    deleted_item = items[0]
 
     orders = current_org.db.select("orders", filters={"id": f"eq.{order_id}"}, limit=1)
     if orders:
@@ -592,5 +618,13 @@ def delete_order_item(order_id: str, item_id: str, current_org: OrgContext = Dep
             "total": totals["total"],
             "updated_at": datetime.utcnow().isoformat(),
         })
+    write_audit_log(
+        org=current_org,
+        action="order.item.delete",
+        entity="order_item",
+        entity_id=item_id,
+        metadata={"order_id": order_id, "product_id": deleted_item.get("product_id"), "cantidad": deleted_item.get("cantidad")},
+        request=request,
+    )
 
     return {"message": "Item deleted"}

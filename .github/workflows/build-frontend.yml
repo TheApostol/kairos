@@ -1,4 +1,4 @@
-name: Build & Deploy Frontend
+name: Frontend Build Smoke
 
 on:
   push:
@@ -9,11 +9,9 @@ on:
 
 jobs:
   build:
-    # Skip if this push is itself from the build bot (prevents infinite loop)
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -31,19 +29,6 @@ jobs:
         working-directory: app/frontend
         run: npm run build
         env:
-          NEXT_PUBLIC_API_URL: https://kairos-anuu.onrender.com
+          NEXT_PUBLIC_API_URL: https://api.polkorp.com
           NEXT_PUBLIC_SUPABASE_URL: https://gachxhquivfvwejytsbb.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-
-      - name: Commit build artifacts
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Stage .next artifacts and any tracked files modified by npm install
-          git add -f app/frontend/.next
-          git add -u
-          git diff --staged --quiet || git commit -m "chore: auto-build frontend"
-          # Discard any tracked-file changes left by npm (e.g. package-lock.json)
-          git checkout -- .
-          git pull --rebase origin main
-          git push

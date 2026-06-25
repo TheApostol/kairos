@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS organization_users (
   organization_id  uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   user_id          uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   role             text NOT NULL DEFAULT 'sales'
-                   CHECK (role IN ('owner','admin','sales','viewer')),
+                   CHECK (role IN ('owner','admin','manager','sales','viewer')),
   status           text NOT NULL DEFAULT 'active'
                    CHECK (status IN ('active','invited','disabled')),
   created_at       timestamptz DEFAULT now(),
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS organization_invitations (
   organization_id  uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   email            text NOT NULL,
   role             text NOT NULL DEFAULT 'sales'
-                   CHECK (role IN ('admin','sales','viewer')),
+                   CHECK (role IN ('admin','manager','sales','viewer')),
   token            text UNIQUE NOT NULL DEFAULT encode(gen_random_bytes(24), 'hex'),
   accepted_at      timestamptz,
   expires_at       timestamptz DEFAULT (now() + interval '7 days'),

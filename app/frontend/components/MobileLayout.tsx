@@ -50,7 +50,7 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
             <Menu className="w-6 h-6" />
           </button>
           <Image
-            src="/logo.svg"
+            src="/dashboard/logo.svg"
             alt="Kairos Distribuidora"
             width={180}
             height={56}

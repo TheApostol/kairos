@@ -50,6 +50,7 @@ interface OrgMeResponse {
 const ROLE_LABELS: Record<string, string> = {
   owner: 'Propietario',
   admin: 'Administrador',
+  manager: 'Manager',
   sales: 'Ventas',
   viewer: 'Solo lectura',
 }
@@ -108,7 +109,7 @@ export default function TeamPage() {
 
   const handleCopyInviteLink = async (inv: Invitation) => {
     if (!inv.token) return
-    const url = `${window.location.origin}/accept-invite?token=${inv.token}`
+    const url = `${window.location.origin}/dashboard/accept-invite?token=${inv.token}`
     await navigator.clipboard.writeText(url)
     setCopiedId(inv.id)
     setTimeout(() => setCopiedId((current) => (current === inv.id ? null : current)), 2000)
@@ -203,6 +204,7 @@ export default function TeamPage() {
                       <SelectContent>
                         <SelectItem value="owner">Propietario</SelectItem>
                         <SelectItem value="admin">Administrador</SelectItem>
+                        <SelectItem value="manager">Manager</SelectItem>
                         <SelectItem value="sales">Ventas</SelectItem>
                         <SelectItem value="viewer">Solo lectura</SelectItem>
                       </SelectContent>
@@ -259,6 +261,7 @@ export default function TeamPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="admin">Administrador</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
                     <SelectItem value="sales">Ventas</SelectItem>
                     <SelectItem value="viewer">Solo lectura</SelectItem>
                   </SelectContent>

@@ -28,7 +28,12 @@ def _recover_orphaned_jobs() -> None:
     """On startup, requeue jobs left 'running' by a worker process that died
     or was redeployed mid-job — safe to just retry: scraper inserts dedupe
     against existing leads, and enrichment skips fields already filled in."""
-    orphaned = db.raw_select("scraper_jobs", {"select": "id", "status": "eq.running", "limit": 50})
+    orphaned = db.raw_select("scraper_jobs", {
+        "select": "id",
+        "status": "eq.running",
+        "organization_id": "not.is.null",
+        "limit": 50,
+    })
     for job in orphaned:
         try:
             db.update("scraper_jobs", job["id"], {"status": "pending", "started_at": None})
@@ -40,6 +45,7 @@ def _claim_next_pending_job() -> dict | None:
     pending = db.raw_select("scraper_jobs", {
         "select": "*",
         "status": "eq.pending",
+        "organization_id": "not.is.null",
         "order": "created_at.asc",
         "limit": 1,
     })
@@ -62,6 +68,18 @@ def _run_job(job: dict) -> None:
     job_type = job.get("job_type") or ("enrichment" if job.get("queries") == ["enrichment"] else "scraper")
 
     logger.info("Running job %s (%s)", job_id, job_type)
+    if not org_id:
+        logger.error("Skipping job %s without organization_id", job_id)
+        try:
+            db.update("scraper_jobs", job_id, {
+                "status": "failed",
+                "error_msg": "Missing organization_id",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            logger.exception("Failed to mark malformed job %s as failed", job_id)
+        return
+
     try:
         if job_type == "enrichment":
             _run_enrichment_job(job_id, params.get("lead_ids"), org_id)

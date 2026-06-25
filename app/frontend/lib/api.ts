@@ -1,6 +1,11 @@
 import { supabase } from './supabaseClient'
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'https://kairos-anuu.onrender.com'
+const API = process.env.NEXT_PUBLIC_API_URL || 'https://api.polkorp.com'
+const APP_BASE_PATH = '/dashboard'
+
+function appPath(path: string) {
+  return `${APP_BASE_PATH}${path}`
+}
 
 async function getAuthHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession()
@@ -40,9 +45,9 @@ export async function apiFetch(path: string, options?: RequestInit) {
       res.status === 403 &&
       text.includes('not a member of any organization') &&
       typeof window !== 'undefined' &&
-      !window.location.pathname.startsWith('/onboarding')
+      !window.location.pathname.startsWith(appPath('/onboarding'))
     ) {
-      window.location.href = '/onboarding'
+      window.location.href = appPath('/onboarding')
     }
     throw new Error(text)
   }
@@ -362,6 +367,10 @@ export async function acceptInvitation(token: string) {
   })
 }
 
+export async function recordLoginEvent() {
+  return apiFetch('/organizations/login-event', { method: 'POST' })
+}
+
 export async function getInvitations() {
   return apiFetch('/organizations/invitations')
 }
@@ -388,6 +397,77 @@ export async function updateMember(userId: string, data: { role?: string; status
 
 export async function removeMember(userId: string) {
   return apiFetch(`/organizations/members/${userId}`, { method: 'DELETE' })
+}
+
+function toQuery(params?: Record<string, string | number | boolean | undefined | null>) {
+  return params ? '?' + new URLSearchParams(
+    Object.fromEntries(
+      Object.entries(params)
+        .filter(([, v]) => v !== undefined && v !== '' && v !== null)
+        .map(([k, v]) => [k, String(v)])
+    )
+  ).toString() : ''
+}
+
+// Polkorp Platform Admin
+export async function getPlatformSummary() {
+  return apiFetch('/platform/summary')
+}
+
+export async function getPlatformOrganizations(params?: Record<string, string | number | boolean | undefined | null>) {
+  return apiFetch(`/platform/organizations${toQuery(params)}`)
+}
+
+export async function updatePlatformOrganization(id: string, data: Record<string, unknown>) {
+  return apiFetch(`/platform/organizations/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function getPlatformSubscriptions(params?: Record<string, string | number | boolean | undefined | null>) {
+  return apiFetch(`/platform/subscriptions${toQuery(params)}`)
+}
+
+export async function updatePlatformSubscription(id: string, data: Record<string, unknown>) {
+  return apiFetch(`/platform/subscriptions/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function getPlatformPlans() {
+  return apiFetch('/platform/plans')
+}
+
+export async function updatePlatformPlanLimit(id: string, data: Record<string, unknown>) {
+  return apiFetch(`/platform/plan-limits/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function getPlatformUsage(params?: Record<string, string | number | boolean | undefined | null>) {
+  return apiFetch(`/platform/usage${toQuery(params)}`)
+}
+
+export async function getPlatformAuditLogs(params?: Record<string, string | number | boolean | undefined | null>) {
+  return apiFetch(`/platform/audit-logs${toQuery(params)}`)
+}
+
+export async function getPlatformFeatureFlags(params?: Record<string, string | number | boolean | undefined | null>) {
+  return apiFetch(`/platform/feature-flags${toQuery(params)}`)
+}
+
+export async function updatePlatformFeatureFlag(organizationId: string, data: { key: string; value: unknown }) {
+  return apiFetch(`/platform/organizations/${organizationId}/feature-flags`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
 }
 
 export const API_BASE = API

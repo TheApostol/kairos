@@ -1,23 +1,23 @@
 {
-  "name": "Kairos Distribuidora CRM",
-  "short_name": "Kairos CRM",
-  "description": "CRM interno para Kairos Distribuidora",
-  "start_url": "/",
+  "name": "Polkorp Suite Dashboard",
+  "short_name": "Polkorp Suite",
+  "description": "Dashboard operativo de Polkorp Suite para administrar tenants, clientes y CRM.",
+  "start_url": "/dashboard/admin",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#1a0e08",
   "theme_color": "#4A3728",
-  "scope": "/",
+  "scope": "/dashboard/",
   "lang": "es",
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "/dashboard/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/dashboard/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
@@ -27,17 +27,17 @@
   "shortcuts": [
     {
       "name": "Leads",
-      "url": "/leads",
+      "url": "/dashboard/leads",
       "description": "Ver lista de leads"
     },
     {
       "name": "Pipeline",
-      "url": "/pipeline",
+      "url": "/dashboard/pipeline",
       "description": "Pipeline de ventas"
     },
     {
       "name": "Órdenes",
-      "url": "/orders",
+      "url": "/dashboard/orders",
       "description": "Ver órdenes"
     }
   ]

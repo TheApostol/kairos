@@ -31,7 +31,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     getMyOrganization()
-      .then(() => router.replace('/'))
+      .then(() => router.replace('/admin'))
       .catch(() => setChecking(false))
   }, [router])
 
@@ -42,7 +42,7 @@ export default function OnboardingPage() {
     setCreating(true)
     try {
       await createOrganization({ name: name.trim(), slug: slug.trim() })
-      router.replace('/')
+      router.replace('/admin')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo crear la organización')
     } finally {
@@ -62,7 +62,7 @@ export default function OnboardingPage() {
     <div className="flex min-h-screen items-center justify-center px-4" style={{ backgroundColor: '#FAF7F2' }}>
       <div className="w-full max-w-sm">
         <div className="flex justify-center mb-6">
-          <Image src="/logo.svg" alt="Kairos Distribuidora" width={220} height={80} priority className="h-16 w-auto" />
+          <Image src="/dashboard/logo.svg" alt="Kairos Distribuidora" width={220} height={80} priority className="h-16 w-auto" />
         </div>
         <div className="rounded-xl shadow-sm p-6" style={{ backgroundColor: '#fff', border: '1px solid #E8DDD5' }}>
           <h1 className="text-xl font-bold mb-1" style={{ color: '#2C1F16' }}>Creá tu organización</h1>

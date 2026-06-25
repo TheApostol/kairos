@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
+import { recordLoginEvent } from '@/lib/api'
 import { supabase } from '@/lib/supabaseClient'
 
 interface AuthContextValue {
@@ -36,9 +37,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
     })
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession)
       setLoading(false)
+      if (event === 'SIGNED_IN' && newSession) {
+        recordLoginEvent().catch(() => {})
+      }
     })
 
     return () => {

@@ -161,7 +161,7 @@ export default function LeadsPage() {
     setWaLinks(null)
     setSendResult('')
     if (type === 'catalogo') {
-      const catalogUrl = 'https://kairos.polkorp.com/public/catalog'
+    const catalogUrl = 'https://polkorp.com/dashboard/public/catalog'
       setEmailSubject('Catálogo de Productos Kairos')
       setEmailBody(`Hola, te compartimos nuestro catálogo de productos:\n${catalogUrl}\n\nQuedamos a tu disposición para cualquier consulta.`)
       setWaMessage(`Hola! Te compartimos nuestro catálogo de productos 🌿\n${catalogUrl}`)

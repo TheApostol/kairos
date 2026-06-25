@@ -14,7 +14,7 @@ interface Product {
   imagen_url?: string
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://kairos-anuu.onrender.com'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.polkorp.com'
 
 function formatCurrency(n?: number) {
   if (n === undefined || n === null) return 'Consultar'

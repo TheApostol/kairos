@@ -15,4 +15,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping backend health endpoint
-        run: curl -sf --max-time 30 https://kairos-anuu.onrender.com/health
+        run: curl -sf --max-time 30 https://api.polkorp.com/health
