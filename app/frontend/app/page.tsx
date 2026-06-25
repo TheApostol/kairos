@@ -18,7 +18,7 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Users, Mail, MessageCircle, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package, Globe, RefreshCw } from 'lucide-react'
+import { Users, Mail, MessageCircle, ShoppingBag, TrendingUp, Loader2, AlertCircle, ExternalLink, Building2, Package, Globe, RefreshCw, Copy, Check } from 'lucide-react'
 import Link from 'next/link'
 import { getLeads, getProducts, scrapeKairosdis, getKairosdisScraperStatus } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -104,6 +104,15 @@ export default function DashboardPage() {
   const [kdStatus, setKdStatus] = useState('')
   const [dormantCount, setDormantCount] = useState<number | null>(null)
   const [lowStockCount, setLowStockCount] = useState<number | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  const copyPublicCatalog = () => {
+    const url = `${window.location.origin}/public/catalog?tipo=mayorista`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
 
   useEffect(() => {
     Promise.all([getLeadStats(), getOrderStats()])
@@ -535,6 +544,15 @@ export default function DashboardPage() {
               >
                 {kdScraping ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />}
                 {kdScraping ? 'Importando...' : 'Importar Kairosdis'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={copyPublicCatalog}
+                className="gap-1.5 text-xs h-7"
+              >
+                {copied ? <Check className="w-3 h-3 text-green-600" /> : <Copy className="w-3 h-3" />}
+                {copied ? 'Copiado!' : 'Link público'}
               </Button>
               {kdStatus && (
                 <span className="text-xs" style={{ color: kdStatus.startsWith('✓') ? '#16a34a' : kdStatus.startsWith('Error') ? '#dc2626' : '#6B4F3A' }}>

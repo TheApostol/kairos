@@ -330,6 +330,105 @@ def get_dormant_clients(dias: int = 30, current_org: OrgContext = Depends(get_cu
     return {"items": result, "total": len(result)}
 
 
+@router.get("/reorder-candidates")
+def get_reorder_candidates(dias: int = 30, limit: int = 15, current_org: OrgContext = Depends(get_current_org)):
+    """Customers whose last order was more than `dias` days ago — prime reorder targets."""
+    from datetime import timedelta
+
+    all_orders = current_org.db.raw_select("orders", {
+        "select": "lead_id,total,fecha_pedido,created_at,numero",
+        "lead_id": "not.is.null",
+        "estado": "neq.cancelado",
+        "order": "fecha_pedido.desc",
+        "limit": "2000",
+    })
+
+    # Keep only the most recent order per lead
+    seen: dict = {}
+    for o in all_orders:
+        lid = str(o.get("lead_id", ""))
+        if lid and lid not in seen:
+            seen[lid] = o
+
+    cutoff = (datetime.utcnow() - timedelta(days=dias)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    candidate_map: dict = {}
+    for lid, o in seen.items():
+        fecha = (o.get("fecha_pedido") or o.get("created_at") or "")[:19]
+        if fecha and fecha < cutoff:
+            candidate_map[lid] = o
+
+    if not candidate_map:
+        return {"items": [], "total": 0, "dias": dias}
+
+    ids_str = ",".join(list(candidate_map.keys())[:100])
+    leads = current_org.db.raw_select("leads", {
+        "select": "id,empresa,telefono,email,whatsapp,ciudad,provincia,estado",
+        "id": f"in.({ids_str})",
+        "estado": "neq.descartado",
+        "limit": str(limit * 3),
+    })
+
+    items = []
+    for lead in leads:
+        lid = str(lead.get("id", ""))
+        last_order = candidate_map.get(lid, {})
+        items.append({
+            **lead,
+            "ultimo_pedido": (last_order.get("fecha_pedido") or last_order.get("created_at") or "")[:10],
+            "ultimo_total": last_order.get("total"),
+            "ultimo_numero": last_order.get("numero"),
+        })
+
+    items.sort(key=lambda x: x.get("ultimo_pedido") or "")
+    return {"items": items[:limit], "total": len(items), "dias": dias}
+
+
+@router.get("/top-customers")
+def get_top_customers(limit: int = 10, current_org: OrgContext = Depends(get_current_org)):
+    """Top customers by total revenue from confirmed orders."""
+    all_orders = current_org.db.raw_select("orders", {
+        "select": "lead_id,total",
+        "lead_id": "not.is.null",
+        "estado": "neq.cancelado",
+        "limit": "5000",
+    })
+
+    lead_revenue: dict = {}
+    lead_count: dict = {}
+    for o in all_orders:
+        lid = str(o.get("lead_id", ""))
+        if lid:
+            try:
+                lead_revenue[lid] = lead_revenue.get(lid, 0.0) + float(o.get("total") or 0)
+                lead_count[lid] = lead_count.get(lid, 0) + 1
+            except (TypeError, ValueError):
+                pass
+
+    if not lead_revenue:
+        return {"items": []}
+
+    top_ids = sorted(lead_revenue, key=lambda x: lead_revenue[x], reverse=True)[:limit]
+    ids_str = ",".join(top_ids)
+    leads = current_org.db.raw_select("leads", {
+        "select": "id,empresa,ciudad,provincia,email,telefono,estado",
+        "id": f"in.({ids_str})",
+        "limit": str(limit),
+    })
+
+    items = []
+    for lead in leads:
+        lid = str(lead.get("id", ""))
+        items.append({
+            **lead,
+            "revenue_total": round(lead_revenue.get(lid, 0), 2),
+            "total_pedidos": lead_count.get(lid, 0),
+        })
+
+    items.sort(key=lambda x: x.get("revenue_total", 0), reverse=True)
+    return {"items": items}
+
+
 @router.get("")
 def list_orders(
     estado: Optional[str] = None,

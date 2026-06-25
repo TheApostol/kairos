@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw, History, ChevronDown, Link2, CheckCircle2 } from 'lucide-react'
+import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw, History, ChevronDown, Link2, CheckCircle2, Copy, Check } from 'lucide-react'
 
 const PER_PAGE = 24
 
@@ -161,6 +161,15 @@ export default function CatalogPage() {
   const [loadingPdfProducts, setLoadingPdfProducts] = useState(false)
   const [pdfSearch, setPdfSearch] = useState('')
   const [pdfError, setPdfError] = useState('')
+
+  const [copied, setCopied] = useState(false)
+  const copyPublicCatalog = () => {
+    const url = `${window.location.origin}/public/catalog?tipo=mayorista`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
 
   // Google Sheets sync
   const [sheetSyncing, setSheetSyncing] = useState(false)
@@ -470,6 +479,15 @@ export default function CatalogPage() {
           >
             {sheetId ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <Link2 className="w-4 h-4" />}
             {sheetId ? 'Sheet conectado' : 'Conectar Google Sheet'}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={copyPublicCatalog}
+            className="gap-2"
+            title="Copiar link público del catálogo mayorista"
+          >
+            {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+            {copied ? 'Copiado!' : 'Link público'}
           </Button>
           <Button onClick={openAddDialog} className="gap-2">
             <Plus className="w-4 h-4" />

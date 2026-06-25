@@ -239,6 +239,14 @@ export async function getOrderStats() {
   return apiFetch('/orders/stats')
 }
 
+export async function getReorderCandidates(dias: number = 30, limit: number = 15) {
+  return apiFetch(`/orders/reorder-candidates?dias=${dias}&limit=${limit}`)
+}
+
+export async function getTopCustomers(limit: number = 10) {
+  return apiFetch(`/orders/top-customers?limit=${limit}`)
+}
+
 // Products / Catalog
 export async function getProducts(params?: Record<string, string>) {
   const query = params ? '?' + new URLSearchParams(params).toString() : ''
@@ -315,6 +323,7 @@ export const SCRAPER_SOURCES = [
   { id: 'web_search', label: 'Búsqueda Web (DuckDuckGo)' },
   { id: 'paginas_amarillas', label: 'Páginas Amarillas', experimental: true },
   { id: 'google_places', label: 'Google Places', requiresApiKey: true },
+  { id: 'mercadolibre', label: 'MercadoLibre (vendedores mayoristas)' },
 ] as const
 
 export const DEFAULT_SCRAPER_SOURCES = ['green_life', 'overpass', 'datos_gob', 'web_search', 'google_places']
