@@ -273,6 +273,13 @@ export async function getProductPriceHistory(id: string | number) {
   return apiFetch(`/products/${id}/price-history`)
 }
 
+export async function searchProductImage(params: { sku?: string; nombre?: string; marca?: string }) {
+  const query = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v))
+  ).toString()
+  return apiFetch(`/products/search-image?${query}`)
+}
+
 // Kairosdis Product Scraper
 export async function scrapeKairosdis() {
   return apiFetch('/products/scrape-kairosdis', { method: 'POST' })

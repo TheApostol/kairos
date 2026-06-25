@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from services.auth import OrgContext, get_current_org
 from services.supabase_client import db, ScopedSupabaseClient
+from services.scraping_utils import ddg_image_search
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -558,6 +559,25 @@ def get_categories(current_org: OrgContext = Depends(get_current_org)):
     cats = list({p.get("categoria") for p in products if p.get("categoria")})
     cats.sort()
     return {"categories": cats}
+
+
+@router.get("/search-image")
+def search_product_image(
+    sku: Optional[str] = None,
+    nombre: Optional[str] = None,
+    marca: Optional[str] = None,
+    current_org: OrgContext = Depends(get_current_org),
+):
+    """Searches the web for candidate product images by SKU/name/brand, so
+    a product missing a photo can be filled in without leaving the catalog
+    editor. Free-text only: results aren't persisted, the caller picks one
+    and saves it as `imagen_url` via the normal update endpoint."""
+    query = " ".join(p.strip() for p in [marca, nombre, sku] if p and p.strip())
+    if not query:
+        raise HTTPException(status_code=400, detail="Indicá al menos sku, nombre o marca para buscar")
+
+    results = ddg_image_search(query, max_results=12)
+    return {"query": query, "results": results}
 
 
 @router.get("")

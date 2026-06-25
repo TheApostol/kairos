@@ -291,6 +291,83 @@ def slugify(text: str) -> str:
     return norm.strip("-")
 
 
+# ─────────────────────────────────────────────
+# Free image search via DuckDuckGo's image endpoint
+# ─────────────────────────────────────────────
+
+_DDG_VQD_REGEX = re.compile(r"vqd=['\"]?([\d-]+)['\"&]")
+
+_ddg_image_rate_limiter = RateLimiter(min_interval=1.0, jitter=1.0)
+
+
+def ddg_image_search(query: str, max_results: int = 12) -> list[dict]:
+    """Free image search via DuckDuckGo's image endpoint (no API key).
+
+    DDG's image results require a per-query `vqd` token that's only handed
+    out via the regular HTML search page — so this first loads that page to
+    scrape the token, then calls the JSON image endpoint with it. Best-effort,
+    like `ddg_html_search`: returns `[]` if DDG blocks/changes either step.
+    """
+    if not query:
+        return []
+
+    token_resp = fetch_with_retries(
+        "https://duckduckgo.com/",
+        params={"q": query},
+        rate_limiter=_ddg_image_rate_limiter,
+        headers=DDG_HEADERS,
+        timeout=15,
+        max_retries=2,
+    )
+    if token_resp is None or token_resp.status_code != 200:
+        return []
+
+    vqd_match = _DDG_VQD_REGEX.search(token_resp.text)
+    if not vqd_match:
+        return []
+
+    images_resp = fetch_with_retries(
+        "https://duckduckgo.com/i.js",
+        params={
+            "l": "us-en",
+            "o": "json",
+            "q": query,
+            "vqd": vqd_match.group(1),
+            "f": ",,,",
+            "p": "1",
+        },
+        rate_limiter=_ddg_image_rate_limiter,
+        headers={**DDG_HEADERS, "Referer": "https://duckduckgo.com/"},
+        timeout=15,
+        max_retries=2,
+    )
+    if images_resp is None or images_resp.status_code != 200:
+        return []
+
+    try:
+        data = images_resp.json()
+    except ValueError:
+        return []
+
+    results = []
+    for item in data.get("results", []):
+        image_url = item.get("image")
+        if not image_url:
+            continue
+        results.append({
+            "image_url": image_url,
+            "thumbnail_url": item.get("thumbnail") or image_url,
+            "source_url": item.get("url", ""),
+            "title": item.get("title", ""),
+            "width": item.get("width"),
+            "height": item.get("height"),
+        })
+        if len(results) >= max_results:
+            break
+
+    return results
+
+
 def discover_website_ddg(empresa: str, ciudad: str = "", provincia: str = "") -> str:
     """Free website discovery via DuckDuckGo's HTML endpoint (no API key).
 

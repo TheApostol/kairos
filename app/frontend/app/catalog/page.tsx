@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
-import { getProducts, getProductCategories, createProduct, updateProduct, getProductPriceHistory, downloadFile, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet } from '@/lib/api'
+import { getProducts, getProductCategories, createProduct, updateProduct, getProductPriceHistory, downloadFile, sendCatalogueToClients, scrapeKairosdis, getKairosdisScraperStatus, syncFromGoogleSheet, searchProductImage } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw, History, ChevronDown } from 'lucide-react'
+import { Plus, Loader2, Package, Pencil, Star, FileDown, Upload, Users, Globe, ChevronLeft, ChevronRight, Sheet, RefreshCw, History, ChevronDown, Search } from 'lucide-react'
 
 const PER_PAGE = 24
 
@@ -41,6 +41,14 @@ interface Product {
   activo?: boolean
   destacado?: boolean
   imagen_url?: string
+  sku?: string
+}
+
+interface ImageSearchResult {
+  image_url: string
+  thumbnail_url: string
+  source_url: string
+  title: string
 }
 
 const CATEGORIAS = [
@@ -123,6 +131,85 @@ function ImageUploader({ value, onChange }: { value: string; onChange: (url: str
           onClick={(e) => { e.stopPropagation(); onChange('') }}>
           Eliminar imagen
         </Button>
+      )}
+    </div>
+  )
+}
+
+function ImageSearchPanel({
+  nombre,
+  defaultSku,
+  onSelect,
+}: {
+  nombre: string
+  defaultSku?: string
+  onSelect: (url: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [sku, setSku] = useState(defaultSku ?? '')
+  const [marca, setMarca] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [results, setResults] = useState<ImageSearchResult[]>([])
+
+  const handleSearch = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await searchProductImage({ sku, nombre, marca })
+      setResults(data.results ?? [])
+      if (!data.results?.length) setError('No se encontraron imágenes para esa búsqueda')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al buscar imágenes')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="border rounded-lg overflow-hidden">
+      <button
+        type="button"
+        className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="flex items-center gap-2">
+          <Search className="w-4 h-4 text-slate-400" />
+          Buscar imagen online
+        </span>
+        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="border-t bg-slate-50 px-3 py-3 space-y-2">
+          <p className="text-xs text-slate-500">
+            Busca usando el nombre del producto{nombre ? <> (<span className="font-medium">{nombre}</span>)</> : ''} junto con el SKU y/o marca que indiques abajo.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="SKU (opcional)" className="h-8 text-sm" />
+            <Input value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Marca (opcional)" className="h-8 text-sm" />
+          </div>
+          <Button type="button" size="sm" className="w-full gap-2" onClick={handleSearch} disabled={loading || (!sku && !nombre && !marca)}>
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            {loading ? 'Buscando...' : 'Buscar imágenes'}
+          </Button>
+          {error && <p className="text-xs text-red-500 text-center py-1">{error}</p>}
+          {results.length > 0 && (
+            <div className="grid grid-cols-4 gap-2 max-h-56 overflow-y-auto pt-1">
+              {results.map((r, i) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={i}
+                  src={r.thumbnail_url}
+                  alt={r.title}
+                  title={r.title}
+                  className="h-16 w-full object-cover rounded cursor-pointer border-2 border-transparent hover:border-amber-400 transition-colors bg-white"
+                  onClick={() => { onSelect(r.image_url); setOpen(false) }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden' }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -619,6 +706,7 @@ export default function CatalogPage() {
           </DialogHeader>
           <div className="space-y-3 py-2 overflow-y-auto flex-1 pr-1">
             <ImageUploader value={form.imagen_url} onChange={(v) => setForm({ ...form, imagen_url: v })} />
+            <ImageSearchPanel nombre={form.nombre} defaultSku={editingProduct?.sku} onSelect={(url) => setForm({ ...form, imagen_url: url })} />
 
             <div className="space-y-1.5">
               <Label>Nombre *</Label>
