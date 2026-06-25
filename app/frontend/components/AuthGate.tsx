@@ -6,14 +6,22 @@ import { useAuth } from '@/contexts/AuthContext'
 import MobileLayout from './MobileLayout'
 
 const PUBLIC_PREFIXES = ['/login', '/signup', '/accept-invite', '/public']
-const NO_LAYOUT_PREFIXES = ['/onboarding']
+const NO_LAYOUT_PREFIXES = ['/onboarding', '/admin']
+
+function isTenantAdminLogin(pathname: string) {
+  return /^\/[^/]+\/admin\/login$/.test(pathname)
+}
+
+function isTenantAdminPath(pathname: string) {
+  return /^\/[^/]+\/admin(\/.*)?$/.test(pathname)
+}
 
 function isPublicPath(pathname: string) {
-  return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`)) || isTenantAdminLogin(pathname)
 }
 
 function isNoLayoutPath(pathname: string) {
-  return NO_LAYOUT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  return NO_LAYOUT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`)) || isTenantAdminPath(pathname)
 }
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
@@ -26,7 +34,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loading) return
     if (!user && !isPublic) {
-      router.replace('/login')
+      router.replace(pathname.startsWith('/admin') ? '/login?next=/admin' : '/login')
     } else if (user && (pathname === '/login' || pathname === '/signup')) {
       router.replace('/')
     }
