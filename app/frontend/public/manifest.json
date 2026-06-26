@@ -5,11 +5,17 @@
   "start_url": "/dashboard/admin",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#1a0e08",
-  "theme_color": "#4A3728",
+  "background_color": "#050914",
+  "theme_color": "#050914",
   "scope": "/dashboard/",
   "lang": "es",
   "icons": [
+    {
+      "src": "/dashboard/polkorp-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
     {
       "src": "/dashboard/icon-192.png",
       "sizes": "192x192",

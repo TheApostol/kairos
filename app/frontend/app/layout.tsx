@@ -16,10 +16,11 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
+      { url: `${basePath}/polkorp-icon.svg`, type: 'image/svg+xml' },
       { url: `${basePath}/icon-192.png`, sizes: '192x192', type: 'image/png' },
       { url: `${basePath}/icon-512.png`, sizes: '512x512', type: 'image/png' },
     ],
-    apple: `${basePath}/apple-touch-icon.png`,
+    apple: `${basePath}/polkorp-icon.svg`,
   },
 }
 
@@ -28,7 +29,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: '#4A3728',
+  themeColor: '#050914',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

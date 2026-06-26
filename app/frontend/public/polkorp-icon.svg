@@ -1,0 +1,13 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="112" fill="#050914"/>
+  <rect x="24" y="24" width="464" height="464" rx="92" fill="url(#paint0_radial)" stroke="rgba(255,255,255,0.16)" stroke-width="8"/>
+  <text x="150" y="314" fill="#C9CED6" font-family="Inter, Arial, sans-serif" font-size="164" font-weight="900">P</text>
+  <text x="238" y="314" fill="#2FA8FF" font-family="Inter, Arial, sans-serif" font-size="164" font-weight="900">K</text>
+  <defs>
+    <radialGradient id="paint0_radial" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(164 118) rotate(49.6355) scale(392.4)">
+      <stop stop-color="#2FA8FF" stop-opacity="0.38"/>
+      <stop offset="0.45" stop-color="#0B5FFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#0A0F1A"/>
+    </radialGradient>
+  </defs>
+</svg>
