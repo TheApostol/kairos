@@ -34,7 +34,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loading) return
     if (!user && !isPublic) {
-      router.replace(pathname.startsWith('/admin') || pathname.startsWith('/platform') ? '/login?next=/admin' : '/login')
+      const next = pathname.startsWith('/admin') || pathname.startsWith('/platform') ? '/admin' : pathname
+      router.replace(`/login?next=${encodeURIComponent(next)}`)
     } else if (user && (pathname === '/login' || pathname === '/signup')) {
       router.replace('/')
     }

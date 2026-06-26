@@ -22,6 +22,8 @@ function LoginForm() {
   const { signIn } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const nextPath = searchParams.get('next') || '/'
+  const isPlatformLogin = nextPath.startsWith('/admin') || nextPath.startsWith('/platform') || nextPath === '/'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -38,7 +40,7 @@ function LoginForm() {
       setError(error)
       return
     }
-    router.replace(searchParams.get('next') || '/')
+    router.replace(nextPath)
   }
 
   return (
@@ -50,10 +52,20 @@ function LoginForm() {
         <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full opacity-10" style={{ backgroundColor: '#C9A040' }} />
         <div className="absolute bottom-0 -left-16 w-64 h-64 rounded-full opacity-10" style={{ backgroundColor: '#C9A040' }} />
         <div className="relative z-10 text-center max-w-md">
-          <Image src="/dashboard/logo.svg" alt="Kairos Distribuidora" width={260} height={90} priority className="h-20 w-auto mx-auto mb-8" />
-          <h2 className="text-2xl font-bold mb-3" style={{ color: '#FAF7F2' }}>Gestioná tu negocio mayorista</h2>
+          {isPlatformLogin ? (
+            <div className="mx-auto mb-8 flex h-20 w-20 items-center justify-center rounded-2xl border border-[#C9A040]/40 bg-[#C9A040]/10 text-3xl font-black text-[#C9A040]">
+              P
+            </div>
+          ) : (
+            <Image src="/dashboard/logo.svg" alt="Kairos Distribuidora" width={260} height={90} priority className="h-20 w-auto mx-auto mb-8" />
+          )}
+          <h2 className="text-2xl font-bold mb-3" style={{ color: '#FAF7F2' }}>
+            {isPlatformLogin ? 'Polkorp Suite Platform Admin' : 'Gestioná tu negocio mayorista'}
+          </h2>
           <p className="text-sm" style={{ color: '#C9B8A8' }}>
-            Leads, pedidos, catálogo y equipo, todo en un solo lugar.
+            {isPlatformLogin
+              ? 'Supervisá clientes, tenants, billing, uso y operaciones desde la consola principal.'
+              : 'Leads, pedidos, catálogo y equipo, todo en un solo lugar.'}
           </p>
         </div>
       </div>
@@ -61,11 +73,21 @@ function LoginForm() {
       <div className="flex flex-1 items-center justify-center px-4 py-12">
         <div className="w-full max-w-sm">
           <div className="flex justify-center mb-6 lg:hidden">
-            <Image src="/dashboard/logo.svg" alt="Kairos Distribuidora" width={220} height={80} priority className="h-16 w-auto" />
+            {isPlatformLogin ? (
+              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-[#2C1F16] text-2xl font-black text-[#C9A040]">
+                P
+              </div>
+            ) : (
+              <Image src="/dashboard/logo.svg" alt="Kairos Distribuidora" width={220} height={80} priority className="h-16 w-auto" />
+            )}
           </div>
           <div className="rounded-xl shadow-sm p-6 sm:p-8" style={{ backgroundColor: '#fff', border: '1px solid #E8DDD5' }}>
-            <h1 className="text-2xl font-bold mb-1" style={{ color: '#2C1F16' }}>Iniciar sesión</h1>
-            <p className="text-sm mb-6" style={{ color: '#6B4F3A' }}>Accedé a tu panel de Kairos CRM</p>
+            <h1 className="text-2xl font-bold mb-1" style={{ color: '#2C1F16' }}>
+              {isPlatformLogin ? 'Ingresar a Polkorp Suite' : 'Iniciar sesión'}
+            </h1>
+            <p className="text-sm mb-6" style={{ color: '#6B4F3A' }}>
+              {isPlatformLogin ? 'Accedé al panel principal para supervisar y modificar clientes.' : 'Accedé a tu panel de Kairos CRM'}
+            </p>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
@@ -121,12 +143,14 @@ function LoginForm() {
               </Button>
             </form>
 
-            <p className="text-sm mt-4 text-center" style={{ color: '#6B4F3A' }}>
-              ¿No tenés cuenta?{' '}
-              <Link href="/signup" className="font-semibold" style={{ color: '#C9A040' }}>
-                Crear cuenta
-              </Link>
-            </p>
+            {!isPlatformLogin && (
+              <p className="text-sm mt-4 text-center" style={{ color: '#6B4F3A' }}>
+                ¿No tenés cuenta?{' '}
+                <Link href="/signup" className="font-semibold" style={{ color: '#C9A040' }}>
+                  Crear cuenta
+                </Link>
+              </p>
+            )}
           </div>
         </div>
       </div>
