@@ -29,7 +29,7 @@ app = FastAPI(
 
 # The production frontends are always allowed, even if ALLOWED_ORIGINS isn't
 # configured (or is misconfigured) on the host.
-_PROD_FRONTEND_ORIGINS = {"https://polkorp.com", "https://www.polkorp.com"}
+_PROD_FRONTEND_ORIGINS = {"https://polkorp.com", "https://www.polkorp.com", "https://kairos.polkorp.com"}
 _configured_origins = {o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()}
 _configured_origins.update(_PROD_FRONTEND_ORIGINS)
 

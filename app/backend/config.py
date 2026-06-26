@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # Comma-separated origins. Example: https://polkorp.com,https://www.polkorp.com
     # Includes the production frontend by default so CORS still works even if
     # the ALLOWED_ORIGINS env var isn't configured on the host (e.g. Render).
-    ALLOWED_ORIGINS: str = "http://localhost:3000,https://polkorp.com,https://www.polkorp.com"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,https://polkorp.com,https://www.polkorp.com,https://kairos.polkorp.com"
     REQUIRE_AUTH: bool = True
 
     class Config:
