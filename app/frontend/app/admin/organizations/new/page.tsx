@@ -24,11 +24,19 @@ const initialForm = {
 }
 
 function slugify(value: string) {
-  return value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
 }
 
 export default function NewOrganizationPage() {
   const [form, setForm] = useState(initialForm)
+  const [slugTouched, setSlugTouched] = useState(false)
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState<any>(null)
   const [error, setError] = useState('')
@@ -97,8 +105,28 @@ export default function NewOrganizationPage() {
 
         <form onSubmit={submit} className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <section className="space-y-5 rounded-3xl border border-white/10 bg-white/[0.04] p-6">
-            <Field label="Nombre empresa"><input value={form.name} onChange={(e) => { set('name', e.target.value); if (!form.slug) set('slug', slugify(e.target.value)) }} className="input" required /></Field>
-            <Field label="Slug"><input value={form.slug} onChange={(e) => set('slug', slugify(e.target.value))} className="input" required /></Field>
+            <Field label="Nombre empresa">
+              <input
+                value={form.name}
+                onChange={(e) => {
+                  set('name', e.target.value)
+                  if (!slugTouched) set('slug', slugify(e.target.value))
+                }}
+                className="input"
+                required
+              />
+            </Field>
+            <Field label="Slug">
+              <input
+                value={form.slug}
+                onChange={(e) => {
+                  setSlugTouched(true)
+                  set('slug', slugify(e.target.value))
+                }}
+                className="input"
+                required
+              />
+            </Field>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Plan"><select value={form.plan_id} onChange={(e) => set('plan_id', e.target.value)} className="input"><option value="starter">Starter</option><option value="growth">Growth</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></Field>
               <Field label="Estado"><select value={form.status} onChange={(e) => set('status', e.target.value)} className="input"><option value="trialing">Trial</option><option value="active">Activo</option><option value="paused">Pausado</option></select></Field>
