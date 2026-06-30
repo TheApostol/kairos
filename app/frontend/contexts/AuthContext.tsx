@@ -9,15 +9,27 @@ interface AuthContextValue {
   user: User | null
   session: Session | null
   loading: boolean
+  isPlatformAdmin: boolean
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signUp: (email: string, password: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
+}
+
+async function checkPlatformAdmin(userId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('platform_admins')
+    .select('role')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .limit(1)
+  return (data?.length ?? 0) > 0
 }
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   session: null,
   loading: true,
+  isPlatformAdmin: false,
   signIn: async () => ({ error: 'Not initialized' }),
   signUp: async () => ({ error: 'Not initialized' }),
   signOut: async () => {},
@@ -30,15 +42,24 @@ export function useAuth() {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       setSession(data.session)
+      if (data.session?.user) {
+        setIsPlatformAdmin(await checkPlatformAdmin(data.session.user.id))
+      }
       setLoading(false)
     })
 
-    const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       setSession(newSession)
+      if (newSession?.user) {
+        setIsPlatformAdmin(await checkPlatformAdmin(newSession.user.id))
+      } else {
+        setIsPlatformAdmin(false)
+      }
       setLoading(false)
       if (event === 'SIGNED_IN' && newSession) {
         recordLoginEvent().catch(() => {})
@@ -66,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user: session?.user ?? null, session, loading, signIn, signUp, signOut }}
+      value={{ user: session?.user ?? null, session, loading, isPlatformAdmin, signIn, signUp, signOut }}
     >
       {children}
     </AuthContext.Provider>

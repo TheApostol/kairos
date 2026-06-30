@@ -25,7 +25,7 @@ function isNoLayoutPath(pathname: string) {
 }
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth()
+  const { user, loading, isPlatformAdmin } = useAuth()
   const pathname = usePathname()
   const router = useRouter()
   const isPublic = isPublicPath(pathname)
@@ -36,10 +36,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     if (!user && !isPublic) {
       const next = pathname.startsWith('/admin') || pathname.startsWith('/platform') ? '/admin' : pathname
       router.replace(`/login?next=${encodeURIComponent(next)}`)
+    } else if (user && isPlatformAdmin && pathname === '/') {
+      router.replace('/admin')
     } else if (user && (pathname === '/login' || pathname === '/signup')) {
-      router.replace('/')
+      router.replace(isPlatformAdmin ? '/admin' : '/')
     }
-  }, [loading, user, isPublic, pathname, router])
+  }, [loading, user, isPlatformAdmin, isPublic, pathname, router])
 
   if (isPublic) {
     return <>{children}</>
