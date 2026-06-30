@@ -73,15 +73,28 @@ def _claim_default_organization(token: str) -> None:
 
 
 class OrgContext:
-    def __init__(self, user_id: str, email: str, organization_id: str, role: str, access_token: str = ""):
+    def __init__(
+        self,
+        user_id: str,
+        email: str,
+        organization_id: str,
+        role: str,
+        access_token: str = "",
+        is_super_admin: bool = False,
+    ):
         self.user_id = user_id
         self.email = email
         self.organization_id = organization_id
         self.role = role
         self.access_token = access_token
+        self.is_super_admin = is_super_admin
 
     @property
-    def db(self) -> ScopedSupabaseClient:
+    def db(self):
+        # Platform super_admins have no org membership; bypass org scoping so
+        # they can read/write leads across all tenants without a 403.
+        if self.is_super_admin:
+            return db
         return ScopedSupabaseClient(db, self.organization_id)
 
 
@@ -126,6 +139,23 @@ def get_current_org(authorization: str = Header(default=None), token: str = Quer
         )
 
     if not memberships:
+        # Check if this user is a platform admin — they never have org memberships
+        # but should be able to read all leads and access tenant management.
+        platform_admin = db.select(
+            "platform_admins",
+            filters={"user_id": f"eq.{user_id}", "status": "eq.active"},
+            select_cols="role",
+            limit=1,
+        )
+        if platform_admin:
+            return OrgContext(
+                user_id=user_id,
+                email=email,
+                organization_id="",
+                role=platform_admin[0].get("role", "super_admin"),
+                access_token=access_token,
+                is_super_admin=True,
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account is not a member of any organization yet. Ask an admin for an invite.",
