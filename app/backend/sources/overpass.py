@@ -26,13 +26,14 @@ _ELEMENT_TYPES = ("node", "way")
 _NAME_TAG_KEYS = ("shop", "amenity", "office", "craft", "leisure")
 
 
-def _build_query(bbox: tuple[float, float, float, float]) -> str:
+def _build_query(bbox: tuple[float, float, float, float], tags=None) -> str:
     south, west, north, east = bbox
     bbox_str = f"{south},{west},{north},{east}"
+    active_tags = tags if tags is not None else OVERPASS_TAGS
 
     clauses = []
     for el_type in _ELEMENT_TYPES:
-        for tag in OVERPASS_TAGS:
+        for tag in active_tags:
             (key, value), = tag.items()
             clauses.append(f'  {el_type}["{key}"="{value}"]({bbox_str});')
         for key in _NAME_TAG_KEYS:
@@ -116,15 +117,27 @@ def search_by_name(empresa: str, ciudad: str = "", provincia: str = "") -> Optio
 
 
 @register_source("overpass")
-def iter_leads(*, areas: Optional[list[str]] = None, tipo_cliente: str = "lead", **_kwargs) -> Iterator[dict]:
-    """Yields lead records from Overpass API for each configured bbox."""
+def iter_leads(
+    *,
+    areas: Optional[list[str]] = None,
+    tipo_cliente: str = "lead",
+    industry_tags: Optional[list] = None,
+    **_kwargs,
+) -> Iterator[dict]:
+    """Yields lead records from Overpass API for each configured bbox.
+
+    `industry_tags` overrides the default OVERPASS_TAGS constant so the
+    caller can target a specific OSM shop/amenity type (e.g. restaurant,
+    hardware, wine) without modifying the module-level default.
+    """
+    active_tags = industry_tags if industry_tags is not None else OVERPASS_TAGS
     seen: set = set()
     bbox_items = OVERPASS_BBOXES.items()
     if areas:
         bbox_items = [(name, bbox) for name, bbox in bbox_items if name in areas]
 
     for area_name, bbox in bbox_items:
-        query = _build_query(bbox)
+        query = _build_query(bbox, tags=active_tags)
         resp = fetch_with_retries(
             OVERPASS_URL,
             method="POST",

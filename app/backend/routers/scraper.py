@@ -21,6 +21,7 @@ from sources.google_places import DEFAULT_QUERIES, MAYORISTA_QUERIES, PlacesAPIE
 from sources.paginas_amarillas import search_by_name as pa_search_by_name
 from sources.overpass import search_by_name as overpass_search_by_name
 from sources.google_places import search_by_name as google_places_search_by_name
+from constants.scraper_targets import AR_ONLY_SOURCES, build_industry_queries, INDUSTRY_OVERPASS_TAGS
 from config import settings
 
 router = APIRouter(prefix="/scraper", tags=["scraper"])
@@ -34,6 +35,9 @@ class ScraperStartRequest(BaseModel):
     tipo_cliente: str = "lead"  # "lead" or "mayorista"
     sources: Optional[List[str]] = None
     source_options: Optional[dict] = None
+    country: str = "AR"
+    city: Optional[str] = None
+    industry: Optional[str] = None
 
 
 class EnrichRequest(BaseModel):
@@ -85,9 +89,9 @@ def _score_lead(record: dict) -> int:
     return min(score, 10)
 
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # ENRICHMENT HELPERS (inline from enriquecedor.py)
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 INSTAGRAM_REGEX = re.compile(r"instagram\.com/([A-Za-z0-9._]{1,30})")
@@ -377,7 +381,6 @@ def _extract_from_soup(soup, result: dict) -> None:
                 break
 
     # 5b. Phone-prefix label scan: "Tel:", "Cel:", "WhatsApp:" in plain elements.
-    # A "WhatsApp:" label also feeds result["whatsapp"], not just telefono.
     if not result["telefono"] or not result["whatsapp"]:
         for el in soup.find_all(['p', 'li', 'span', 'div']):
             txt = el.get_text(" ", strip=True)
@@ -397,7 +400,6 @@ def _extract_from_soup(soup, result: dict) -> None:
     # 6. FULL page text scan — last resort, catches plain-text emails in any element
     if not result["email"]:
         full_text = soup.get_text(separator=" ")
-        # Also try deobfuscated forms: "info [at] empresa.com", "info(at)empresa.com"
         deob = re.sub(r'\s*\[at\]\s*|\s*\(at\)\s*|\s+AT\s+|\{at\}|&#64;|arroba', '@', full_text, flags=re.IGNORECASE)
         deob = re.sub(r'\s*\[dot\]\s*|\s*\(dot\)\s*|\{dot\}|&#46;|punto', '.', deob, flags=re.IGNORECASE)
         emails = EMAIL_REGEX.findall(deob)
@@ -405,8 +407,7 @@ def _extract_from_soup(soup, result: dict) -> None:
         if valid:
             result["email"] = valid[0]
 
-    # 6b. Split-email reassembly — catches addresses broken across sibling
-    # <span> tags (a pattern some sites use specifically to dodge scrapers).
+    # 6b. Split-email reassembly
     if not result["email"]:
         reassembled = _reassemble_split_emails(soup)
         if reassembled:
@@ -424,9 +425,7 @@ def _extract_from_soup(soup, result: dict) -> None:
         if phone_m and len(re.sub(r'\D', '', phone_m.group())) >= 8:
             result["telefono"] = phone_m.group().strip()
 
-    # 7b. WhatsApp fallback: scan raw HTML (covers click-to-chat widgets wired
-    # via onclick/data- attributes rather than a real <a href>) for wa.me /
-    # whatsapp.com links missed by the <a href> pass above.
+    # 7b. WhatsApp fallback: scan raw HTML
     if not result["whatsapp"]:
         wa = WA_REGEX.search(full_html)
         if wa:
@@ -483,8 +482,6 @@ def _scrape_website(url: str) -> dict:
         return result
 
     base_url = url.rstrip("/")
-    # Static path guesses, used as a fallback alongside (not instead of) real
-    # crawling below, in case the homepage doesn't link its contact page.
     static_guesses = [
         base_url + "/contacto",
         base_url + "/contactanos",
@@ -496,21 +493,19 @@ def _scrape_website(url: str) -> dict:
         base_url + "/acerca",
         base_url + "/empresa",
         base_url + "/quienes-somos",
-        base_url + "/pages/contact",       # Shopify
-        base_url + "/pages/contactanos",   # Shopify
+        base_url + "/pages/contact",
+        base_url + "/pages/contactanos",
         base_url + "/pages/nosotros",
         base_url + "/pages/acerca-de",
-        base_url + "/paginas/contacto",    # Tiendanube
+        base_url + "/paginas/contacto",
         base_url + "/info",
     ]
-    # Homepage goes first — we need to read it anyway to discover real
-    # contact/about links from its nav/footer before falling back to guesses.
     pages_to_try = [base_url] + static_guesses
 
-    HEAD_BYTES = 80_000    # first 80KB covers <head> JSON-LD, meta, and nav
-    TAIL_BYTES = 150_000   # last 150KB covers footer where emails live
-    SMALL_PAGE = HEAD_BYTES + TAIL_BYTES   # pages under this → read fully
-    MAX_PAGES = 12         # hard cap on total requests per site
+    HEAD_BYTES = 80_000
+    TAIL_BYTES = 150_000
+    SMALL_PAGE = HEAD_BYTES + TAIL_BYTES
+    MAX_PAGES = 12
 
     seen_urls: set[str] = set()
     homepage_crawled = False
@@ -527,7 +522,6 @@ def _scrape_website(url: str) -> dict:
                 seen_urls.add(page_url)
                 pages_visited += 1
                 try:
-                    # Stream response — read up to TAIL_BYTES past SMALL_PAGE limit
                     raw_chunks: list[bytes] = []
                     total = 0
                     with client.stream("GET", page_url, headers=_ENRICH_HEADERS) as resp:
@@ -537,11 +531,10 @@ def _scrape_website(url: str) -> dict:
                             raw_chunks.append(chunk)
                             total += len(chunk)
                             if total >= SMALL_PAGE + TAIL_BYTES:
-                                break  # hard cap ~380KB per page
+                                break
 
                     raw_content = b"".join(raw_chunks)
 
-                    # For large pages keep head + tail so we always catch the footer
                     if len(raw_content) > SMALL_PAGE:
                         raw = raw_content[:HEAD_BYTES] + raw_content[-TAIL_BYTES:]
                     else:
@@ -558,14 +551,11 @@ def _scrape_website(url: str) -> dict:
                         if page_url == base_url and not homepage_crawled:
                             homepage_crawled = True
                             discovered = _discover_contact_links(base_url, soup)
-                            # Real links take priority over the remaining static
-                            # guesses — insert them right after the homepage.
                             new_links = [l for l in discovered if l not in seen_urls and l not in pages_to_try]
                             pages_to_try[i:i] = new_links
                         soup.decompose()
                         del soup
                     else:
-                        # Fallback regex-only path
                         if not result["email"]:
                             emails = EMAIL_REGEX.findall(text)
                             valid = [e for e in emails if _is_valid_email(e)]
@@ -607,19 +597,15 @@ def _discover_website(empresa: str, ciudad: str, provincia: str = "") -> str:
     return discover_website_ddg(empresa, ciudad, provincia)
 
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # BACKGROUND TASKS
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 
 def _job_is_cancelled(scoped_db: ScopedSupabaseClient, job_id: str) -> bool:
     """True once `/jobs/{id}/cancel` has flipped this job's row away from
     "running" — checked periodically inside the scraper/enrichment loops so
     a cancelled job actually stops instead of running to completion in the
-    background. Without this, the cancel endpoint only updated the DB row;
-    the worker thread (which runs jobs synchronously, one at a time) stayed
-    blocked inside the old job until it finished naturally — sometimes well
-    over an hour, given the rate-limited cross-reference sources — so every
-    job queued after a "cancelled" one just sat stuck in "pendiente"."""
+    background."""
     try:
         rows = scoped_db.raw_select("scraper_jobs", {"select": "status", "id": f"eq.{job_id}", "limit": 1})
         return not rows or rows[0].get("status") != "running"
@@ -652,11 +638,6 @@ def _run_scraper_job(
             "progress": 0,
         })
 
-        # Pre-load existing leads for this tipo_cliente once, normalized, so
-        # dedup works both against history and across sources within this
-        # same job (e.g. green_life and overpass finding the same shop under
-        # slightly different name spellings) — and so a record is never
-        # silently dropped just because a per-record DB lookup failed.
         existing_leads = scoped_db.select_all(
             "leads",
             filters={"tipo_cliente": f"eq.{tipo_cliente}"},
@@ -695,7 +676,7 @@ def _run_scraper_job(
 
                     key = _normalize_empresa(record.get("empresa", ""))
                     if key and key in seen_empresas:
-                        continue  # duplicate — already in DB or already inserted earlier in this job
+                        continue
 
                     try:
                         scoped_db.insert("leads", record)
@@ -741,8 +722,6 @@ def _run_scraper_job(
                 stat["status"] = "completed"
 
             if cancelled:
-                # Leave the row exactly as /jobs/{id}/cancel left it
-                # ("failed" + "Cancelado manualmente") — just stop running.
                 return
 
             progress = int(100 * (source_index + 1) / num_sources)
@@ -771,11 +750,6 @@ def _run_scraper_job(
         })
 
 
-# Cross-reference sources consulted, in priority order, for whatever fields
-# are still missing after the website-discovery/scrape pass below. The free
-# directory sources run first since they're free to call; google_places goes
-# last and silently no-ops without a network call if GOOGLE_API_KEY isn't
-# configured, so it's safe to leave in this list unconditionally.
 _CROSS_REFERENCE_SOURCES = [pa_search_by_name, overpass_search_by_name, google_places_search_by_name]
 _CROSS_REFERENCE_FIELDS = (
     "website", "email", "instagram", "whatsapp", "telefono", "direccion", "ciudad", "provincia",
@@ -785,11 +759,7 @@ _CROSS_REFERENCE_FIELDS = (
 def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
     """Discovers a website (if missing) and scrapes it for contact fields,
     then cross-references whatever's still missing against the other free
-    directory sources by business name (see `_CROSS_REFERENCE_SOURCES`).
-    Writes any updates straight to `lead`'s row. Returns a stats delta dict
-    (same keys as `_run_enrichment_job`'s `field_stats`, plus `enriched`)
-    for the caller to aggregate — kept side-effect-free on shared state so
-    it's safe to run from a thread pool."""
+    directory sources by business name."""
     stats = {
         "websites_discovered": 0,
         "emails_found": 0,
@@ -804,7 +774,6 @@ def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
     website = lead.get("website", "") or ""
     update_data: dict = {}
 
-    # If no website on file, try to discover it for free via DuckDuckGo.
     if not website and lead.get("empresa"):
         website = _discover_website(
             lead.get("empresa", ""),
@@ -822,8 +791,6 @@ def _enrich_one_lead(scoped_db: ScopedSupabaseClient, lead: dict) -> dict:
     else:
         stats["no_website"] += 1
 
-    # Cross-reference the other free directory sources for whatever's still
-    # missing, by business name.
     merged = {**lead, **update_data}
     missing = [f for f in _CROSS_REFERENCE_FIELDS if not merged.get(f)]
     if missing and lead.get("empresa"):
@@ -886,16 +853,6 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
             ids_str = ",".join(lead_ids)
             all_leads = scoped_db.raw_select("leads", {"select": "*", "id": f"in.({ids_str})", "limit": len(lead_ids)})
         else:
-            # No "website" filter here: leads with no website on file (the
-            # common case for green_life/overpass/datos_gob sources) still
-            # need to go through this loop so the by-name DDG discovery
-            # below gets a chance to find one.
-            #
-            # Supabase's PostgREST clamps any single request to its
-            # configured max-rows (1000) regardless of the `limit`/Range
-            # requested, so a request for "limit: 5000" silently came back
-            # truncated at 1000 — paginate in <=1000-row pages instead so the
-            # full backlog actually gets processed.
             all_leads = []
             offset = 0
             page_size = 1000
@@ -919,11 +876,6 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
 
         scoped_db.update("scraper_jobs", job_id, {"total": total, "total_found": total})
 
-        # Not a `with` block: ThreadPoolExecutor.__exit__ calls
-        # shutdown(wait=True), which would block this (single) worker thread
-        # until every already-submitted lead finishes — including on
-        # cancellation, defeating the point. Shut down manually instead so a
-        # cancelled job can return immediately (see `cancelled` below).
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
         cancelled = False
         try:
@@ -944,13 +896,9 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
                         for key, value in delta.items():
                             field_stats[key] += value
 
-                    # Run GC periodically to reclaim BS4 / httpx memory
                     if completed % 25 == 0:
                         gc.collect()
 
-                    # Update progress every few completions rather than on
-                    # every single one, to avoid a DB write storm from 5
-                    # concurrent workers finishing in quick succession.
                     if completed % 5 == 0 or completed == total:
                         if _job_is_cancelled(scoped_db, job_id):
                             cancelled = True
@@ -962,15 +910,9 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
                             "details": field_stats,
                         })
         finally:
-            # On cancellation, drop anything not yet started and don't wait
-            # for the (up to 5) already-running leads — they finish and exit
-            # on their own without blocking the worker from picking up the
-            # next pending job.
             executor.shutdown(wait=not cancelled, cancel_futures=cancelled)
 
         if cancelled:
-            # Leave the row exactly as /jobs/{id}/cancel left it ("failed" +
-            # "Cancelado manualmente") — just stop running.
             return
 
         del all_leads
@@ -994,13 +936,25 @@ def _run_enrichment_job(job_id: str, lead_ids: Optional[List[str]], org_id: str 
         })
 
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # ROUTES
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 
 @router.post("/start")
 def start_scraper(body: ScraperStartRequest, current_org: OrgContext = Depends(get_current_org)):
-    sources = body.sources or DEFAULT_SOURCES
+    country = (body.country or "AR").upper()
+    city = body.city
+    industry = body.industry
+
+    requested_sources = body.sources or DEFAULT_SOURCES
+    # Non-AR: strip Argentina-specific directory sources; Google Places and
+    # Overpass (OSM) are the only engines that work globally.
+    if country != "AR":
+        sources = [s for s in requested_sources if s not in AR_ONLY_SOURCES]
+        if not sources:
+            sources = ["google_places", "overpass"]
+    else:
+        sources = requested_sources
 
     # Jobs are picked up by the separate worker process (see worker.py), which
     # only has access to settings.GOOGLE_API_KEY (an env var) — not to this
@@ -1031,10 +985,22 @@ def start_scraper(body: ScraperStartRequest, current_org: OrgContext = Depends(g
     if "google_places" in sources:
         if body.queries:
             queries = body.queries
+        elif industry:
+            queries = build_industry_queries(industry, city, country)
         elif tipo_cliente == "mayorista":
             queries = MAYORISTA_QUERIES
         else:
             queries = DEFAULT_QUERIES
+
+    # Pass industry-specific OSM tags to Overpass via source_options so the
+    # worker targets the right shop/amenity type without touching the module default.
+    source_options = dict(body.source_options or {})
+    if "overpass" in sources and industry:
+        overpass_tags = INDUSTRY_OVERPASS_TAGS.get(industry.lower(), [])
+        if overpass_tags:
+            overpass_opts = dict(source_options.get("overpass", {}))
+            overpass_opts["industry_tags"] = overpass_tags
+            source_options["overpass"] = overpass_opts
 
     job = current_org.db.insert("scraper_jobs", {
         "status": "pending",
@@ -1048,7 +1014,7 @@ def start_scraper(body: ScraperStartRequest, current_org: OrgContext = Depends(g
         "params": {
             "tipo_cliente": tipo_cliente,
             "max_per_query": body.max_per_query,
-            "source_options": body.source_options,
+            "source_options": source_options,
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -1057,9 +1023,6 @@ def start_scraper(body: ScraperStartRequest, current_org: OrgContext = Depends(g
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create scraper job")
 
-    # The worker process (worker.py) polls for pending jobs and runs them —
-    # this endpoint only ever enqueues, so a web-process restart/redeploy
-    # while the job runs can no longer kill it mid-way.
     return {"job_id": job_id, "status": "pending", "sources": sources, "tipo_cliente": tipo_cliente}
 
 
@@ -1238,11 +1201,6 @@ def start_enrichment(body: EnrichRequest, current_org: OrgContext = Depends(get_
         "status": "pending",
         "job_type": "enrichment",
         "queries": ["enrichment"],
-        # Enrichment doesn't use the `sources` column at all (it's a
-        # scraper-only concept) — set it explicitly to an empty list instead
-        # of leaving it to the DB's `["google_places"]` default, which would
-        # otherwise show up misleadingly as "Fuentes: google_places" in the
-        # job history UI for a job that never touches Google Places.
         "sources": [],
         "progress": 0,
         "new_found": 0,
@@ -1255,5 +1213,4 @@ def start_enrichment(body: EnrichRequest, current_org: OrgContext = Depends(get_
     if not job_id:
         raise HTTPException(status_code=500, detail="Failed to create enrichment job")
 
-    # Picked up by the worker process (worker.py) — see /start for why.
     return {"job_id": job_id, "status": "pending"}

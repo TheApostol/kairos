@@ -4,13 +4,14 @@ Centralizes the wellness/holistic/esoteric "rubro" vocabulary and the
 geographic targets (Argentina, prioritizing major commercial cities) used to
 build queries for the different free data sources.
 """
+from typing import Optional
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # Rubro keywords (wellness / natural / esoteric / decor niche)
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 
 RUBRO_KEYWORDS = [
-    "dietética", "dietéticas", "herboristería", "herboristerías",
+    "dietética", "dietéticas", "herboristería", "herboristería",
     "casa naturista", "almacén natural", "productos naturales",
     "tienda natural", "tienda saludable", "tienda holística",
     "centro holístico", "casa esotérica", "tienda esotérica",
@@ -25,9 +26,9 @@ COMMERCIAL_VARIANTS = [
 ]
 
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # Geographic targets — Argentina, prioritizing major commercial cities
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # `pa_slug` is the lowercase/no-accent slug used by paginasamarillas.com.ar
 # location-based listing URLs (`/b/{categoria}/{pa_slug}`).
 
@@ -61,9 +62,9 @@ GEO_TARGETS = [
 ]
 
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # OpenStreetMap / Overpass targets
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # Bounding boxes (south, west, north, east) for the biggest commercial
 # cities. Kept to a manageable set since each bbox = one Overpass request.
 
@@ -96,19 +97,9 @@ OVERPASS_BBOXES = {
     "Ushuaia": (-54.84, -68.36, -54.77, -68.25),
 }
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # Ciudad/provincia alias resolution
-# ─────────────────────────────────────────────
-# Lead `ciudad`/`provincia` text comes verbatim from whichever source found
-# it (OSM's addr:city, Páginas Amarillas' addressLocality, Google's
-# formatted address, a typo in someone's OSM edit...), while the curated
-# coverage above is keyed by a single canonical short name ("CABA",
-# "GBA Sur"). An exact string match between the two essentially never
-# happens for the most common case — e.g. "Ciudad Autónoma de Buenos
-# Aires" never equals "CABA" — so without this alias table, the
-# Overpass/Páginas Amarillas cross-reference lookups in the enrichment
-# pipeline silently skip the majority of leads they actually cover.
-# Keys are slugified (see services.scraping_utils.slugify).
+# ───────────────────────────────────────────────
 AREA_ALIASES: dict[str, str] = {
     # CABA — by far the most common case across every source
     "ciudad-autonoma-de-buenos-aires": "CABA",
@@ -163,14 +154,9 @@ OVERPASS_TAGS = [
 ]
 
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # datos.jus.gob.ar "Registro Nacional de Sociedades" relevance filter
-# ─────────────────────────────────────────────
-# CLAE 2020 4-digit divisions whose businesses are plausibly relevant to the
-# wellness/natural/esoteric/decor niche (only ~12% of RNS rows carry an
-# actividad_codigo at all, so this is a secondary signal — name-based
-# keyword matching below is the primary one).
-
+# ───────────────────────────────────────────────
 RNS_RELEVANT_CLAE_PREFIXES = ["4773", "4775", "4649", "4761", "8552", "9609"]
 
 RNS_RELEVANT_KEYWORDS = [
@@ -181,13 +167,9 @@ RNS_RELEVANT_KEYWORDS = [
 ]
 
 
-# ─────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # Páginas Amarillas Argentina — category slugs for `/b/{slug}/{location}`
-# ─────────────────────────────────────────────
-# Confirmed live (returned `total` > 0 for at least one major city). Slugs
-# not in this map are skipped — paginasamarillas returns `total: 0` rather
-# than an error for unknown categories, but we avoid the wasted requests.
-
+# ───────────────────────────────────────────────
 RUBRO_TO_PA_SLUGS: dict[str, str] = {
     "Dietética": "dieteticas",
     "Herboristería": "herboristerias",
@@ -228,3 +210,122 @@ def build_freetext_queries(geo_targets=None, rubro_pa_slugs=None) -> list[tuple[
         for geo in geos:
             combos.append((rubro_label, category_slug, geo["pa_slug"]))
     return combos
+
+
+# ───────────────────────────────────────────────
+# Multi-country / multi-industry support
+# ───────────────────────────────────────────────
+
+# Sources that only make sense for Argentina (local directories / open data).
+# Automatically removed from the sources list when country != "AR".
+AR_ONLY_SOURCES: frozenset[str] = frozenset({"green_life", "ecored", "paginas_amarillas", "datos_gob"})
+
+# Maps a lowercase industry keyword to a list of Google Places text-search
+# terms. Each term is combined with the city/country to form the final query.
+INDUSTRY_QUERY_MAP: dict[str, list[str]] = {
+    "restaurant": ["restaurant", "restaurante"],
+    "restaurante": ["restaurante", "restaurant"],
+    "wine": ["wine shop", "wine store", "vinoteca", "vinos y licores"],
+    "vinos": ["vinoteca", "vinos y licores", "wine shop"],
+    "liquor": ["liquor store", "licorería", "bebidas alcohólicas", "vinos y licores"],
+    "licorería": ["licorería", "bebidas alcohólicas", "liquor store"],
+    "hardware": ["hardware store", "ferretería"],
+    "ferretería": ["ferretería", "hardware store"],
+    "ferreteria": ["ferretería", "hardware store"],
+    "retail": ["store", "tienda", "negocio"],
+    "tienda": ["tienda", "store"],
+    "supermarket": ["supermarket", "supermercado"],
+    "supermercado": ["supermercado", "supermarket"],
+    "pharmacy": ["pharmacy", "farmacia"],
+    "farmacia": ["farmacia", "pharmacy"],
+    "bakery": ["bakery", "panadería"],
+    "panadería": ["panadería", "bakery"],
+    "panaderia": ["panadería", "bakery"],
+    "coffee": ["coffee shop", "café", "cafetería"],
+    "cafe": ["café", "cafetería", "coffee shop"],
+    "café": ["café", "cafetería", "coffee shop"],
+    "gym": ["gym", "gimnasio"],
+    "gimnasio": ["gimnasio", "gym"],
+    "beauty": ["beauty salon", "salón de belleza", "peluquería"],
+    "peluquería": ["peluquería", "beauty salon"],
+    "peluqueria": ["peluquería", "beauty salon"],
+    "hotel": ["hotel", "hospedaje"],
+    "clothing": ["clothing store", "tienda de ropa", "indumentaria"],
+    "ropa": ["tienda de ropa", "indumentaria", "clothing store"],
+    "electronics": ["electronics store", "electrónica", "electrodomésticos"],
+    "electronica": ["electrónica", "electronics store"],
+    "furniture": ["furniture store", "mueblería", "muebles"],
+    "mueblería": ["mueblería", "furniture store"],
+    "muebleria": ["mueblería", "furniture store"],
+    "auto": ["auto parts", "repuestos", "autopartes"],
+    "autopartes": ["autopartes", "repuestos", "auto parts"],
+    "holistic": ["tienda holística", "tienda esotérica", "sahumerios", "aromaterapia"],
+    "holistica": ["tienda holística", "tienda esotérica", "sahumerios"],
+    "natural": ["tienda naturista", "dietética", "herboristería", "productos naturales"],
+    "naturista": ["tienda naturista", "dietética", "herboristería"],
+    "dietética": ["dietética", "tienda naturista", "productos naturales"],
+    "dietetica": ["dietética", "tienda naturista", "productos naturales"],
+}
+
+# Maps a lowercase industry keyword to OSM shop/amenity tag dicts for Overpass.
+INDUSTRY_OVERPASS_TAGS: dict[str, list[dict]] = {
+    "restaurant": [{"amenity": "restaurant"}, {"amenity": "fast_food"}],
+    "restaurante": [{"amenity": "restaurant"}, {"amenity": "fast_food"}],
+    "wine": [{"shop": "wine"}, {"shop": "alcohol"}],
+    "vinos": [{"shop": "wine"}, {"shop": "alcohol"}],
+    "liquor": [{"shop": "alcohol"}, {"shop": "wine"}],
+    "licorería": [{"shop": "alcohol"}, {"shop": "wine"}],
+    "licoreria": [{"shop": "alcohol"}, {"shop": "wine"}],
+    "hardware": [{"shop": "hardware"}],
+    "ferretería": [{"shop": "hardware"}],
+    "ferreteria": [{"shop": "hardware"}],
+    "retail": [{"shop": "general"}, {"shop": "variety_store"}],
+    "tienda": [{"shop": "general"}, {"shop": "variety_store"}],
+    "supermarket": [{"shop": "supermarket"}],
+    "supermercado": [{"shop": "supermarket"}],
+    "pharmacy": [{"amenity": "pharmacy"}],
+    "farmacia": [{"amenity": "pharmacy"}],
+    "bakery": [{"shop": "bakery"}],
+    "panadería": [{"shop": "bakery"}],
+    "panaderia": [{"shop": "bakery"}],
+    "coffee": [{"amenity": "cafe"}],
+    "cafe": [{"amenity": "cafe"}],
+    "café": [{"amenity": "cafe"}],
+    "gym": [{"leisure": "fitness_centre"}, {"amenity": "gym"}],
+    "gimnasio": [{"leisure": "fitness_centre"}, {"amenity": "gym"}],
+    "beauty": [{"shop": "beauty"}, {"shop": "hairdresser"}],
+    "peluquería": [{"shop": "hairdresser"}, {"shop": "beauty"}],
+    "peluqueria": [{"shop": "hairdresser"}, {"shop": "beauty"}],
+    "hotel": [{"tourism": "hotel"}, {"tourism": "hostel"}],
+    "clothing": [{"shop": "clothes"}],
+    "ropa": [{"shop": "clothes"}],
+    "electronics": [{"shop": "electronics"}],
+    "electronica": [{"shop": "electronics"}],
+    "furniture": [{"shop": "furniture"}],
+    "mueblería": [{"shop": "furniture"}],
+    "muebleria": [{"shop": "furniture"}],
+    "auto": [{"shop": "car_parts"}, {"shop": "car_repair"}],
+    "autopartes": [{"shop": "car_parts"}],
+    "holistic": [{"shop": "esoteric"}, {"shop": "herbalist"}, {"shop": "health_food"}],
+    "holistica": [{"shop": "esoteric"}, {"shop": "herbalist"}, {"shop": "health_food"}],
+    "natural": [{"shop": "health_food"}, {"shop": "herbalist"}],
+    "naturista": [{"shop": "health_food"}, {"shop": "herbalist"}],
+    "dietética": [{"shop": "health_food"}, {"shop": "herbalist"}],
+    "dietetica": [{"shop": "health_food"}, {"shop": "herbalist"}],
+}
+
+
+def build_industry_queries(
+    industry: str,
+    city: Optional[str] = None,
+    country: str = "AR",
+) -> list[str]:
+    """Returns Google Places text-search queries for a given industry + location.
+
+    Looks up the industry key in INDUSTRY_QUERY_MAP (case-insensitive). Falls
+    back to using the raw industry string as the search term if no mapping
+    exists. The city takes precedence over country as the location qualifier.
+    """
+    terms = INDUSTRY_QUERY_MAP.get(industry.lower(), [industry])
+    location = city or country
+    return [f"{term} {location}" for term in terms]
